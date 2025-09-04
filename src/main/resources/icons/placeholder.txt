@@ -1,0 +1,12 @@
+# 图标文件目录
+# 请将以下图标文件放置在此目录：
+# - markdown.png (16x16) - Markdown文件图标
+# - header.png (16x16) - 标题标记图标  
+# - link.png (16x16) - 链接标记图标
+# - image.png (16x16) - 图片标记图标
+# - code.png (16x16) - 代码块标记图标
+
+# 可以从以下来源获取图标：
+# - IntelliJ IDEA图标库
+# - Material Design图标
+# - 自定义设计的图标

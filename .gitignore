@@ -1,0 +1,111 @@
+# IntelliJ IDEA 插件项目 .gitignore
+
+# 构建输出目录
+build/
+out/
+target/
+
+# Gradle 相关
+.gradle/
+gradle-app.setting
+!gradle-wrapper.jar
+!gradle-wrapper.properties
+!gradle/wrapper/gradle-wrapper.properties
+
+# IntelliJ IDEA 配置文件
+.idea/
+*.iws
+*.iml
+*.ipr
+.intellijPlatform/
+
+# Eclipse 配置文件
+.project
+.metadata
+.classpath
+.settings/
+bin/
+
+# VS Code 配置文件
+.vscode/
+
+# 编译产生的 class 文件
+*.class
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 插件打包文件
+*.zip
+*.jar
+!gradle-wrapper.jar
+
+# 测试相关文件
+**/test_*.md
+**/debug_*.md
+**/DEBUG_*.md
+**/TEST_*.md
+**/*_test.md
+**/*_TEST.md
+
+# 文档临时文件
+**/*_FEATURE.md
+**/*_SUPPORT.md
+**/*_FIX.md
+**/*_GUIDE.md
+**/*_NOTES.md
+THEME_CODE_BLOCKS.md
+LINK_CLICK_FEATURE.md
+ALL_LINKS_SUPPORT.md
+
+# 本地配置文件
+local.properties
+gradle.properties.local
+
+# 缓存目录
+.cache/
+tmp/
+temp/
+
+# 操作系统生成的文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Node.js (如果有前端依赖)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 备份文件
+*.bak
+*.backup
+*.orig
+
+# 密钥和证书文件
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+
+# IDE sandbox 目录
+.idea-sandbox/
+
+# 插件开发相关
+plugin-sandbox/
