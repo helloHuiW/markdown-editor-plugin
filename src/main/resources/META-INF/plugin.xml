@@ -73,7 +73,7 @@
 
     <actions>
         <!-- 主菜单 -->
-        <group id="MarkdownEditor.TopLevelMenu" text="Markdown Editor" description="Markdown Editor actions">
+        <group id="MarkdownEditor.TopLevelMenu" text="MINI Markdown" description="MINI Markdown actions">
             <add-to-group group-id="MainMenu" anchor="before" relative-to-action="HelpMenu"/>
         
             <action id="MarkdownEditor.TogglePreview"

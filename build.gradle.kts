@@ -38,7 +38,7 @@ intellijPlatform {
     buildSearchableOptions = false
     
     pluginConfiguration {
-        name = "Markdown Editor"
+        name = "mini markdown"
         version = "1.0.0"
         description = "A comprehensive markdown editor with preview functionality"
         
