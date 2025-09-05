@@ -65,8 +65,9 @@
 1. 打开 `IntelliJ IDEA`
 2. 前往 `File` → `Settings` → `Plugins`
 3. 搜索 `"Markdown Editor"`
-4. 点击 `Install` 安装插件
+4. 点击 `Install` 安装插件o'c
 5. 重启 IDE 完成安装
+
 
 ### 方式二：手动安装
 1. 下载最新版本的 `markdown-editor-plugin-1.0.0.zip`
@@ -158,7 +159,7 @@ public class Hello {
 ```bash
 # 克隆项目
 git clone <repository-url>
-cd markdown_edit
+cd markdown-editor-plugin
 
 # 构建项目
 ./gradlew build
@@ -172,7 +173,7 @@ cd markdown_edit
 
 ### 项目结构
 ```
-markdown_edit/
+markdown-editor-plugin/
 ├── src/main/java/com/markdown/editor/
 │   ├── actions/          # 操作和动作
 │   ├── dialog/           # 对话框组件
@@ -231,7 +232,7 @@ System.out.println("🔍 调试信息: " + info);
 5. **创建 Pull Request**
 
 ### 问题报告
-- 使用 [GitHub Issues](https://github.com/your-username/markdown-editor-plugin/issues) 报告 Bug
+- 使用 [GitHub Issues](https://github.com/helloHuiW/markdown-editor-plugin/issues) 报告 Bug
 - 提供详细的复现步骤和环境信息
 - 包含相关的日志和截图
 
@@ -291,9 +292,9 @@ limitations under the License.
 
 ## 📞 联系方式
 
-- **邮箱**: 3273298329@qq.com
-- **GitHub**: [项目地址](https://github.com/your-username/markdown-editor-plugin)
-- **Issues**: [问题反馈](https://github.com/your-username/markdown-editor-plugin/issues)
+- **邮箱**: 327398329@qq.com
+- **GitHub**: [项目地址](https://github.com/helloHuiW/markdown-editor-plugin)
+- **Issues**: [问题反馈](https://github.com/helloHuiW/markdown-editor-plugin/issues)
 
 ---
 
@@ -302,5 +303,15 @@ limitations under the License.
 **🌟 如果这个项目对您有帮助，请给个 Star 支持一下！🌟**
 
 [⬆️ 回到顶部](#-markdown-editor-plugin)
+
+</div>
+
+**请作者喝杯瑞幸☕**
+
+<div align="center">
+
+![微信](src/main/resources/images/weixin.png) ![支付宝](src/main/resources/images/zhifubao.png)
+
+*扫码支持开发者*
 
 </div>

@@ -50,9 +50,7 @@
         <!-- 编辑器组件 -->
         <fileEditorProvider implementation="com.markdown.editor.editor.MarkdownFileEditorProvider"/>
         
-        <!-- 语言支持 -->
-        <lang.syntaxHighlighterFactory language="Markdown" 
-                                        implementationClass="com.markdown.editor.highlight.MarkdownSyntaxHighlighterFactory"/>
+        <!-- 语言支持 - 移除自定义语法高亮，使用内置Markdown插件 -->
         
         <!-- 代码折叠 -->
         <lang.foldingBuilder language="Markdown" 

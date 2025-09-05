@@ -45,6 +45,8 @@ public class MarkdownToolWindow {
     private Document document;
     private VirtualFile currentFile;
     private JLabel statusLabel;
+    private JLabel filePathLabel;
+    private boolean isDocumentModified = false;
     
     public MarkdownToolWindow(Project project) {
         this.project = project;
@@ -54,12 +56,26 @@ public class MarkdownToolWindow {
     }
     
     private void initializeUI() {
+        // 移除主面板边框
+        mainPanel.setBorder(null);
+        
+        // 创建顶部面板：包含工具栏和文件路径
+        JPanel topPanel = new JBPanel<>(new BorderLayout());
+        topPanel.setBorder(null);
+        
         // 创建工具栏
         JToolBar toolBar = createToolBar();
-        mainPanel.add(toolBar, BorderLayout.NORTH);
+        topPanel.add(toolBar, BorderLayout.NORTH);
+        
+        // 创建文件路径显示面板
+        JPanel filePathPanel = createFilePathPanel();
+        topPanel.add(filePathPanel, BorderLayout.SOUTH);
+        
+        mainPanel.add(topPanel, BorderLayout.NORTH);
         
         // 创建Tab面板
         tabbedPane = new JBTabbedPane();
+        tabbedPane.setBorder(null); // 移除Tab面板边框
         
         // 编辑器Tab
         JPanel editorPanel = createEditorPanel();
@@ -68,6 +84,18 @@ public class MarkdownToolWindow {
         // 预览Tab
         previewPanel = new MarkdownPreviewPanel(project);
         tabbedPane.addTab("👁️ 预览", previewPanel.getComponent());
+        
+        // 添加Tab切换监听器，确保切换到预览时自动刷新
+        tabbedPane.addChangeListener(e -> {
+            int selectedIndex = tabbedPane.getSelectedIndex();
+            if (selectedIndex == 1) { // 预览Tab的索引是1
+                ApplicationManager.getApplication().invokeLater(() -> {
+                    // 强制刷新预览内容，不依赖缓存
+                    forceRefreshPreview();
+                    updateStatus("预览已刷新");
+                });
+            }
+        });
         
         mainPanel.add(tabbedPane, BorderLayout.CENTER);
         
@@ -78,13 +106,56 @@ public class MarkdownToolWindow {
         statusLabel.setFont(statusLabel.getFont().deriveFont(11f));
         mainPanel.add(statusLabel, BorderLayout.SOUTH);
         
-        // 初始化时创建新文档
-        newFile();
+        // UI组件都添加完毕后，确保默认选中编辑Tab
+        ApplicationManager.getApplication().invokeLater(() -> {
+            tabbedPane.setSelectedIndex(0);
+            System.out.println("🔄 强制设置编辑Tab为选中状态: " + tabbedPane.getSelectedIndex());
+            
+            // 然后初始化新文档
+            newFile();
+        });
+    }
+    
+    private JPanel createFilePathPanel() {
+        JPanel panel = new JBPanel<>(new BorderLayout());
+        panel.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
+        
+        // 创建文件路径标签
+        filePathLabel = new JBLabel("📄 新建文档 (未保存)");
+        filePathLabel.setForeground(new Color(100, 130, 160));
+        filePathLabel.setFont(filePathLabel.getFont().deriveFont(Font.PLAIN, 11f));
+        
+        panel.add(filePathLabel, BorderLayout.WEST);
+        
+        return panel;
+    }
+    
+    /**
+     * 更新文件路径显示
+     */
+    private void updateFilePathDisplay() {
+        ApplicationManager.getApplication().invokeLater(() -> {
+            if (currentFile != null) {
+                String fileName = currentFile.getName();
+                String fullPath = currentFile.getPath();
+                String displayText = String.format("📄 %s - %s", fileName, fullPath);
+                if (isDocumentModified) {
+                    displayText = "🔸 " + displayText + " (已修改)";
+                }
+                filePathLabel.setText(displayText);
+                filePathLabel.setToolTipText(fullPath);
+            } else {
+                String displayText = isDocumentModified ? "🔸 新建文档 (未保存*)" : "📄 新建文档 (未保存)";
+                filePathLabel.setText(displayText);
+                filePathLabel.setToolTipText("新建的文档，尚未保存到文件");
+            }
+        });
     }
     
     private JToolBar createToolBar() {
         JToolBar toolBar = new JToolBar();
         toolBar.setFloatable(false);
+        toolBar.setBorder(null); // 移除工具栏边框
         
         // 新建按钮
         JButton newButton = new JButton("新建");
@@ -110,27 +181,13 @@ public class MarkdownToolWindow {
         saveAsButton.addActionListener(e -> saveAsFile());
         toolBar.add(saveAsButton);
         
-        toolBar.addSeparator();
-        
-        // 主题选择
-        JComboBox<String> themeCombo = new JComboBox<>(new String[]{"GitHub", "暗黑", "简洁"});
-        themeCombo.setToolTipText("选择预览主题");
-        themeCombo.addActionListener(e -> {
-            String selectedTheme = (String) themeCombo.getSelectedItem();
-            if (previewPanel != null) {
-                previewPanel.setTheme(selectedTheme);
-                updatePreview();
-                updateStatus("主题已切换为: " + selectedTheme);
-            }
-        });
-        toolBar.add(new JLabel("主题: "));
-        toolBar.add(themeCombo);
         
         return toolBar;
     }
     
     private JPanel createEditorPanel() {
         JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(null); // 移除编辑器面板边框
         
         // 创建编辑器
         EditorFactory editorFactory = EditorFactory.getInstance();
@@ -157,6 +214,7 @@ public class MarkdownToolWindow {
         panel.add(formatToolBar, BorderLayout.NORTH);
         
         JBScrollPane scrollPane = new JBScrollPane(editor.getComponent());
+        scrollPane.setBorder(null); // 移除编辑器滚动面板边框
         panel.add(scrollPane, BorderLayout.CENTER);
         
         return panel;
@@ -167,10 +225,13 @@ public class MarkdownToolWindow {
             document.addDocumentListener(new DocumentListener() {
                 @Override
                 public void documentChanged(@NotNull DocumentEvent event) {
-                    // 延迟更新预览
+                    // 标记文档已修改
+                    isDocumentModified = true;
+                    // 延迟更新预览和文件路径显示
                     ApplicationManager.getApplication().invokeLater(() -> {
                         updatePreview();
                         updateStatus("文档已修改");
+                        updateFilePathDisplay();
                     });
                 }
             });
@@ -184,6 +245,19 @@ public class MarkdownToolWindow {
         }
     }
     
+    /**
+     * 强制刷新预览，清除缓存并重新渲染
+     */
+    private void forceRefreshPreview() {
+        if (document != null && previewPanel != null) {
+            String content = document.getText();
+            // 调用预览面板的刷新方法，强制重新渲染
+            previewPanel.refresh();
+            // 然后更新内容，确保最新内容被渲染
+            previewPanel.updateContent(content);
+        }
+    }
+    
     private void updateStatus(String message) {
         if (statusLabel != null) {
             statusLabel.setText(message);
@@ -191,11 +265,61 @@ public class MarkdownToolWindow {
     }
     
     private void newFile() {
+        // 检查当前文档是否有未保存的修改
+        if (isDocumentModified) {
+            int choice = Messages.showYesNoCancelDialog(
+                project,
+                "当前文档有未保存的修改，是否保存？",
+                "保存确认",
+                "保存",
+                "不保存",
+                "取消",
+                Messages.getQuestionIcon()
+            );
+            
+            switch (choice) {
+                case Messages.YES: // 保存
+                    saveFile();
+                    if (isDocumentModified) {
+                        // 如果用户取消了保存，则不创建新文件
+                        return;
+                    }
+                    break;
+                case Messages.NO: // 不保存
+                    // 继续创建新文件
+                    break;
+                case Messages.CANCEL: // 取消
+                default:
+                    return; // 取消操作
+            }
+        }
+        
+        // 切换到编辑Tab
+        tabbedPane.setSelectedIndex(0);
+        
+        // 创建新文档内容
+        String newContent = "# 新的Markdown文档\n\n开始编写您的内容...\n\n## 标题示例\n\n这是一个**粗体**文本和*斜体*文本的示例。\n\n```java\n// 代码块示例\npublic class Hello {\n    public static void main(String[] args) {\n        System.out.println(\"Hello World!\");\n    }\n}\n```\n\n> 这是一个引用块\n\n## 多级列表示例\n\n### 无序列表嵌套\n- 一级项目1\n  - 二级项目1\n    - 三级项目1\n    - 三级项目2\n  - 二级项目2\n- 一级项目2\n\n### 有序列表嵌套\n1. 第一步\n   1. 子步骤1.1\n   2. 子步骤1.2\n      1. 详细步骤1.2.1\n      2. 详细步骤1.2.2\n2. 第二步\n\n### 混合列表嵌套\n1. 有序项目1\n   - 无序子项目1\n   - 无序子项目2\n     1. 有序孙项目1\n     2. 有序孙项目2\n2. 有序项目2\n   - 无序子项目A\n     - 更深层无序项目\n";
+        
         WriteCommandAction.runWriteCommandAction(project, () -> {
-            document.setText("# 新的Markdown文档\n\n开始编写您的内容...\n\n## 标题示例\n\n这是一个**粗体**文本和*斜体*文本的示例。\n\n```java\n// 代码块示例\npublic class Hello {\n    public static void main(String[] args) {\n        System.out.println(\"Hello World!\");\n    }\n}\n```\n\n> 这是一个引用块\n\n- 列表项1\n- 列表项2\n- 列表项3\n");
+            document.setText(newContent);
             currentFile = null;
+            isDocumentModified = false; // 重置修改状态
             updateStatus("新建文档");
-            updatePreview();
+            updateFilePathDisplay();
+            
+            // 只有在预览Tab被选中时才更新预览（避免初始化时的状态混乱）
+            if (tabbedPane.getSelectedIndex() == 1) {
+                updatePreview();
+            }
+        });
+        
+        // 确保焦点在编辑器上
+        ApplicationManager.getApplication().invokeLater(() -> {
+            if (editor != null) {
+                editor.getComponent().requestFocus();
+                // 将光标定位到文档开头
+                editor.getCaretModel().moveToOffset(0);
+            }
         });
     }
     
@@ -217,8 +341,10 @@ public class MarkdownToolWindow {
                 WriteCommandAction.runWriteCommandAction(project, () -> {
                     document.setText(content);
                     currentFile = file;
+                    isDocumentModified = false; // 重置修改状态
                     updateStatus("已打开: " + file.getName());
                     updatePreview();
+                    updateFilePathDisplay();
                 });
             } catch (IOException e) {
                 Messages.showErrorDialog(project, "打开文件失败: " + e.getMessage(), "错误");
@@ -244,6 +370,7 @@ public class MarkdownToolWindow {
             if (file != null) {
                 saveToFile(file);
                 currentFile = file;
+                updateFilePathDisplay();
             }
         }
     }
@@ -253,7 +380,9 @@ public class MarkdownToolWindow {
             try {
                 String content = document.getText();
                 file.setBinaryContent(content.getBytes(StandardCharsets.UTF_8));
+                isDocumentModified = false; // 保存成功后重置修改状态
                 updateStatus("已保存: " + file.getName());
+                updateFilePathDisplay();
             } catch (IOException e) {
                 Messages.showErrorDialog(project, "保存文件失败: " + e.getMessage(), "错误");
             }
@@ -312,6 +441,7 @@ public class MarkdownToolWindow {
         // 创建一个工具栏容器
         JToolBar toolBar = new JToolBar();
         toolBar.setFloatable(false);
+        toolBar.setBorder(null); // 移除格式工具栏边框
         toolBar.setLayout(new BorderLayout());
         toolBar.add(scrollPane, BorderLayout.CENTER);
         
@@ -506,11 +636,51 @@ public class MarkdownToolWindow {
     }
     
     public void dispose() {
-        if (editor != null && !editor.isDisposed()) {
-            EditorFactory.getInstance().releaseEditor(editor);
-        }
-        if (previewPanel != null) {
-            previewPanel.dispose();
+        System.out.println("🗑️ 释放MarkdownToolWindow资源");
+        
+        try {
+            // 释放编辑器资源
+            if (editor != null && !editor.isDisposed()) {
+                // 释放编辑器（会自动移除监听器）
+                EditorFactory.getInstance().releaseEditor(editor);
+                editor = null;
+                System.out.println("🗑️ 已释放编辑器资源");
+            }
+            
+            // 释放预览面板
+            if (previewPanel != null) {
+                previewPanel.dispose();
+                previewPanel = null;
+                System.out.println("🗑️ 已释放预览面板资源");
+            }
+            
+            // 释放UI组件
+            if (tabbedPane != null) {
+                tabbedPane.removeAll();
+                tabbedPane = null;
+            }
+            
+            if (statusLabel != null) {
+                statusLabel = null;
+            }
+            
+            // 清空主面板 (但不能设为null，因为是final)
+            if (mainPanel != null) {
+                mainPanel.removeAll();
+            }
+            
+            // 清空引用 (不能设final字段为null)
+            document = null;
+            currentFile = null;
+            
+            // 强制垃圾回收建议
+            System.gc();
+            
+            System.out.println("✅ MarkdownToolWindow资源释放完成");
+            
+        } catch (Exception e) {
+            System.err.println("❌ 释放MarkdownToolWindow资源时出错: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 }

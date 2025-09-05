@@ -5,15 +5,19 @@ import org.intellij.markdown.ast.ASTNode;
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor;
 import org.intellij.markdown.html.HtmlGenerator;
 import org.intellij.markdown.parser.MarkdownParser;
+import java.util.Stack;
 
 /**
  * Markdown处理器
  * 负责将Markdown文本转换为HTML
  */
 public class MarkdownProcessor {
-    private String currentTheme = "GitHub";
+    private String currentTheme = "暗黑";
     private final MarkdownParser parser;
     private final GFMFlavourDescriptor flavour;
+    
+    // 添加内存管理标记
+    private volatile boolean disposed = false;
     
     public MarkdownProcessor() {
         this.flavour = new GFMFlavourDescriptor();
@@ -21,22 +25,28 @@ public class MarkdownProcessor {
     }
     
     /**
-     * 处理Markdown文本并转换为HTML
+     * 处理Markdown文本并转换为HTML (简化版本，兼容JTextPane)
      * @param markdownText 原始Markdown文本
      * @return 渲染后的HTML字符串
      */
     public String processMarkdown(String markdownText) {
+        // 防御性检查：如果已释放则不处理
+        if (disposed) {
+            System.err.println("⚠️ MarkdownProcessor已释放，无法处理内容");
+            return "<html><body><p>处理器已释放</p></body></html>";
+        }
+        
         if (markdownText == null || markdownText.trim().isEmpty()) {
-            return createEmptyHtml();
+            return "<html><body><p>请输入Markdown内容...</p></body></html>";
         }
         
         try {
-            // 使用简化的HTML生成，直接将Markdown文本转换为基本HTML
-            String basicHtml = convertToBasicHtml(markdownText);
-            return wrapHtmlDocument(basicHtml);
+            // 使用简化的HTML生成，避免复杂CSS
+            String basicHtml = convertToSimpleHtml(markdownText);
+            return "<html><body>" + basicHtml + "</body></html>";
             
         } catch (Exception e) {
-            return createErrorHtml("解析错误: " + e.getMessage());
+            return "<html><body><p style='color: red;'>解析错误: " + e.getMessage() + "</p></body></html>";
         }
     }
     
@@ -45,6 +55,483 @@ public class MarkdownProcessor {
      */
     public void setTheme(String theme) {
         this.currentTheme = theme;
+    }
+    
+    /**
+     * 转换为简单HTML，只使用基础标签，避免复杂CSS
+     */
+    private String convertToSimpleHtml(String markdown) {
+        StringBuilder html = new StringBuilder();
+        String[] lines = markdown.split("\n");
+        boolean inCodeBlock = false;
+        String codeBlockLanguage = null;
+        Stack<String> listStack = new Stack<>(); // 跟踪嵌套列表类型
+        int lastListLevel = -1; // 跟踪列表层级
+        
+        for (String line : lines) {
+            // 代码块处理
+            if (line.startsWith("```")) {
+                if (inCodeBlock) {
+                    html.append("</pre>\n");
+                    inCodeBlock = false;
+                    codeBlockLanguage = null;
+                } else {
+                    // 提取语言标识
+                    codeBlockLanguage = line.substring(3).trim();
+                    if (codeBlockLanguage.isEmpty()) {
+                        codeBlockLanguage = "text";
+                    }
+                    
+                    // 开始代码块，添加语言类名
+                    html.append("<pre class=\"language-").append(codeBlockLanguage.toLowerCase()).append("\">");
+                    inCodeBlock = true;
+                }
+                continue;
+            }
+            
+            if (inCodeBlock) {
+                // 在代码块中应用语法高亮
+                String highlightedCode = applySyntaxHighlighting(line, codeBlockLanguage);
+                html.append(highlightedCode).append("\n");
+                continue;
+            }
+            
+            // 标题处理
+            if (line.startsWith("######")) {
+                html.append("<h6>").append(processInlineFormatting(line.substring(6).trim())).append("</h6>\n");
+            } else if (line.startsWith("#####")) {
+                html.append("<h5>").append(processInlineFormatting(line.substring(5).trim())).append("</h5>\n");
+            } else if (line.startsWith("####")) {
+                html.append("<h4>").append(processInlineFormatting(line.substring(4).trim())).append("</h4>\n");
+            } else if (line.startsWith("###")) {
+                html.append("<h3>").append(processInlineFormatting(line.substring(3).trim())).append("</h3>\n");
+            } else if (line.startsWith("##")) {
+                html.append("<h2>").append(processInlineFormatting(line.substring(2).trim())).append("</h2>\n");
+            } else if (line.startsWith("#")) {
+                html.append("<h1>").append(processInlineFormatting(line.substring(1).trim())).append("</h1>\n");
+            }
+            // 列表处理 (支持多级嵌套)
+            else if (line.matches("^\\s*[*+-]\\s+.*") || line.matches("^\\s*\\d+\\.\\s+.*")) {
+                int currentLevel = getListLevel(line);
+                boolean isOrdered = line.matches("^\\s*\\d+\\.\\s+.*");
+                String listType = isOrdered ? "ol" : "ul";
+                
+                // 处理列表层级变化
+                handleListLevelChange(html, listStack, lastListLevel, currentLevel, listType);
+                
+                // 添加列表项内容
+                String content;
+                if (isOrdered) {
+                    content = line.replaceAll("^\\s*\\d+\\.\\s+", "");
+                } else {
+                    content = line.replaceAll("^\\s*[*+-]\\s+", "");
+                }
+                html.append("<li>").append(processInlineFormatting(content)).append("</li>\n");
+                
+                lastListLevel = currentLevel;
+            }
+            // 引用处理
+            else if (line.startsWith(">")) {
+                String content = line.substring(1).trim();
+                html.append("<blockquote>").append(processInlineFormatting(content)).append("</blockquote>\n");
+            }
+            // 分隔线
+            else if (line.matches("^\\s*[-*_]{3,}\\s*$")) {
+                html.append("<hr>\n");
+            }
+            // 空行处理
+            else if (line.trim().isEmpty()) {
+                closeAllLists(html, listStack);
+                lastListLevel = -1;
+                html.append("<br>\n");
+            }
+            // 普通段落
+            else {
+                closeAllLists(html, listStack);
+                lastListLevel = -1;
+                html.append("<p>").append(processInlineFormatting(line)).append("</p>\n");
+            }
+        }
+        
+        // 关闭未闭合的标签
+        if (inCodeBlock) {
+            html.append("</pre>\n");
+        }
+        closeAllLists(html, listStack);
+        
+        return html.toString();
+    }
+    
+    /**
+     * 处理行内格式（粗体、斜体、链接等）
+     */
+    private String processInlineFormatting(String text) {
+        if (text == null) return "";
+        
+        // 先进行HTML转义
+        text = escapeHtml(text);
+        
+        // 然后处理Markdown格式，注意这里需要处理已转义的字符
+        
+        // 处理链接 [text](url)
+        text = text.replaceAll("\\[([^\\]]+)\\]\\(([^\\)]+)\\)", "<a href=\"$2\">$1</a>");
+        
+        // 处理粗体 **text**
+        text = text.replaceAll("\\*\\*([^*]+)\\*\\*", "<strong>$1</strong>");
+        
+        // 处理斜体 *text*
+        text = text.replaceAll("\\*([^*]+)\\*", "<em>$1</em>");
+        
+        // 处理行内代码 `code`
+        text = text.replaceAll("`([^`]+)`", "<code>$1</code>");
+        
+        return text;
+    }
+    
+    /**
+     * HTML转义
+     */
+    private String escapeHtml(String text) {
+        if (text == null) return "";
+        
+        return text.replace("&", "&amp;")
+                  .replace("<", "&lt;")
+                  .replace(">", "&gt;")
+                  .replace("\"", "&quot;")
+                  .replace("'", "&#39;");
+    }
+    
+    /**
+     * 获取列表项的缩进层级
+     */
+    private int getListLevel(String line) {
+        int spaces = 0;
+        for (char c : line.toCharArray()) {
+            if (c == ' ') {
+                spaces++;
+            } else if (c == '\t') {
+                spaces += 4; // 一个tab等于4个空格
+            } else {
+                break;
+            }
+        }
+        return spaces / 2; // 每两个空格为一个层级
+    }
+    
+    /**
+     * 处理列表层级变化
+     */
+    private void handleListLevelChange(StringBuilder html, Stack<String> listStack, 
+                                      int lastLevel, int currentLevel, String listType) {
+        // 如果当前层级比上一层级深，需要开始新的嵌套列表
+        if (currentLevel > lastLevel) {
+            for (int i = lastLevel + 1; i <= currentLevel; i++) {
+                html.append("<").append(listType).append(">\n");
+                listStack.push(listType);
+            }
+        }
+        // 如果当前层级比上一层级浅，需要关闭一些列表
+        else if (currentLevel < lastLevel) {
+            int levelsToClose = lastLevel - currentLevel;
+            for (int i = 0; i < levelsToClose && !listStack.isEmpty(); i++) {
+                String closingType = listStack.pop();
+                html.append("</").append(closingType).append(">\n");
+            }
+            
+            // 如果列表类型不同，需要关闭当前列表并开始新的
+            if (!listStack.isEmpty() && !listStack.peek().equals(listType)) {
+                String oldType = listStack.pop();
+                html.append("</").append(oldType).append(">\n");
+                html.append("<").append(listType).append(">\n");
+                listStack.push(listType);
+            } else if (listStack.isEmpty()) {
+                html.append("<").append(listType).append(">\n");
+                listStack.push(listType);
+            }
+        }
+        // 同一层级，但列表类型不同
+        else if (currentLevel == lastLevel && !listStack.isEmpty() && !listStack.peek().equals(listType)) {
+            String oldType = listStack.pop();
+            html.append("</").append(oldType).append(">\n");
+            html.append("<").append(listType).append(">\n");
+            listStack.push(listType);
+        }
+        // 第一个列表项
+        else if (listStack.isEmpty()) {
+            html.append("<").append(listType).append(">\n");
+            listStack.push(listType);
+        }
+    }
+    
+    /**
+     * 关闭所有打开的列表
+     */
+    private void closeAllLists(StringBuilder html, Stack<String> listStack) {
+        while (!listStack.isEmpty()) {
+            String listType = listStack.pop();
+            html.append("</").append(listType).append(">\n");
+        }
+    }
+    
+    /**
+     * 应用语法高亮 (修复重复标签问题)
+     */
+    private String applySyntaxHighlighting(String line, String language) {
+        if (line == null || line.trim().isEmpty()) {
+            return escapeHtml(line);
+        }
+        
+        // 根据语言类型应用不同的高亮规则 (在转义前处理，避免标签冲突)
+        switch (language.toLowerCase()) {
+            case "java":
+                return highlightJavaSimple(line);
+            case "javascript":
+            case "js":
+                return highlightJavaScriptSimple(line);
+            case "python":
+            case "py":
+                return highlightPythonSimple(line);
+            case "html":
+            case "xml":
+                return highlightHtmlSimple(line);
+            case "css":
+                return highlightCssSimple(line);
+            case "json":
+                return highlightJsonSimple(line);
+            case "sql":
+                return highlightSqlSimple(line);
+            default:
+                return escapeHtml(line); // 无高亮，直接返回转义后的文本
+        }
+    }
+    
+    /**
+     * 简化的Java语法高亮 (直接方式，避免临时标记)
+     */
+    private String highlightJavaSimple(String line) {
+        if (line == null || line.trim().isEmpty()) {
+            return escapeHtml(line);
+        }
+        
+        // 先转义HTML特殊字符
+        line = escapeHtml(line);
+        
+        // 直接进行替换，按优先级顺序
+        
+        // 1. 处理行注释 (优先级最高)
+        if (line.contains("//")) {
+            int commentIndex = line.indexOf("//");
+            String beforeComment = line.substring(0, commentIndex);
+            String comment = line.substring(commentIndex);
+            return processJavaCode(beforeComment) + "<span class=\"comment\">" + comment + "</span>";
+        }
+        
+        // 2. 处理多行注释
+        line = line.replaceAll("/\\*([^*]*)\\*/", "<span class=\"comment\">/*$1*/</span>");
+        
+        // 3. 处理字符串 (在关键字之前)
+        line = line.replaceAll("\"([^\"]*)\"", "<span class=\"string\">\"$1\"</span>");
+        line = line.replaceAll("'([^']*)'", "<span class=\"string\">'$1'</span>");
+        
+        // 4. 处理剩余的代码部分
+        return processJavaCode(line);
+    }
+    
+    /**
+     * 处理Java代码的关键字和数字高亮
+     */
+    private String processJavaCode(String line) {
+        // 处理数字
+        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span class=\"number\">$1</span>");
+        
+        // 处理关键字
+        String[] javaKeywords = {"public", "private", "protected", "static", "final", "abstract", 
+                                "class", "interface", "extends", "implements", "import", "package",
+                                "if", "else", "for", "while", "do", "switch", "case", "default",
+                                "break", "continue", "return", "try", "catch", "finally", "throw", "throws",
+                                "new", "this", "super", "null", "true", "false", "void", "int", "String",
+                                "boolean", "double", "float", "long", "char", "byte", "short"};
+        
+        for (String keyword : javaKeywords) {
+            // 只替换完整的单词，避免替换HTML标签中的内容
+            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*>)", "<span class=\"keyword\">" + keyword + "</span>");
+        }
+        
+        return line;
+    }
+    
+    /**
+     * 简化的JavaScript语法高亮
+     */
+    private String highlightJavaScriptSimple(String line) {
+        if (line == null || line.trim().isEmpty()) {
+            return escapeHtml(line);
+        }
+        
+        line = escapeHtml(line);
+        
+        // 处理行注释
+        if (line.contains("//")) {
+            int commentIndex = line.indexOf("//");
+            String beforeComment = line.substring(0, commentIndex);
+            String comment = line.substring(commentIndex);
+            return processJSCode(beforeComment) + "<span class=\"comment\">" + comment + "</span>";
+        }
+        
+        // 处理多行注释
+        line = line.replaceAll("/\\*([^*]*)\\*/", "<span class=\"comment\">/*$1*/</span>");
+        
+        // 处理字符串
+        line = line.replaceAll("\"([^\"]*)\"", "<span class=\"string\">\"$1\"</span>");
+        line = line.replaceAll("'([^']*)'", "<span class=\"string\">'$1'</span>");
+        line = line.replaceAll("`([^`]*)`", "<span class=\"string\">`$1`</span>"); // 模板字符串
+        
+        return processJSCode(line);
+    }
+    
+    /**
+     * 处理JavaScript代码的关键字和数字高亮
+     */
+    private String processJSCode(String line) {
+        // 处理数字
+        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span class=\"number\">$1</span>");
+        
+        // 处理关键字
+        String[] jsKeywords = {"function", "var", "let", "const", "if", "else", "for", "while", 
+                              "do", "switch", "case", "default", "break", "continue", "return",
+                              "try", "catch", "finally", "throw", "new", "this", "typeof", "instanceof",
+                              "true", "false", "null", "undefined", "class", "extends"};
+        
+        for (String keyword : jsKeywords) {
+            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*>)", "<span class=\"keyword\">" + keyword + "</span>");
+        }
+        
+        return line;
+    }
+    
+    /**
+     * 简化的Python语法高亮
+     */
+    private String highlightPythonSimple(String line) {
+        if (line == null || line.trim().isEmpty()) {
+            return escapeHtml(line);
+        }
+        
+        line = escapeHtml(line);
+        
+        // 处理Python注释
+        if (line.contains("#")) {
+            int commentIndex = line.indexOf("#");
+            String beforeComment = line.substring(0, commentIndex);
+            String comment = line.substring(commentIndex);
+            return processPythonCode(beforeComment) + "<span class=\"comment\">" + comment + "</span>";
+        }
+        
+        // 处理字符串
+        line = line.replaceAll("\"([^\"]*)\"", "<span class=\"string\">\"$1\"</span>");
+        line = line.replaceAll("'([^']*)'", "<span class=\"string\">'$1'</span>");
+        
+        return processPythonCode(line);
+    }
+    
+    /**
+     * 处理Python代码的关键字和数字高亮
+     */
+    private String processPythonCode(String line) {
+        // 处理数字
+        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span class=\"number\">$1</span>");
+        
+        // 处理关键字
+        String[] pythonKeywords = {"def", "class", "if", "elif", "else", "for", "while", "break", 
+                                  "continue", "return", "try", "except", "finally", "raise",
+                                  "import", "from", "as", "with", "pass", "lambda", "yield",
+                                  "True", "False", "None", "and", "or", "not", "in", "is"};
+        
+        for (String keyword : pythonKeywords) {
+            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*>)", "<span class=\"keyword\">" + keyword + "</span>");
+        }
+        
+        return line;
+    }
+    
+    /**
+     * 简化的HTML语法高亮
+     */
+    private String highlightHtmlSimple(String line) {
+        line = escapeHtml(line);
+        
+        // HTML标签 (已转义的)
+        line = line.replaceAll("&lt;(/?)([a-zA-Z][a-zA-Z0-9]*)(.*?)&gt;", 
+                              "<span class=\"keyword\">&lt;$1$2</span><span class=\"variable\">$3</span><span class=\"keyword\">&gt;</span>");
+        
+        // HTML属性
+        line = line.replaceAll("([a-zA-Z-]+)=&quot;([^&]*)&quot;", 
+                              "<span class=\"function\">$1</span>=<span class=\"string\">&quot;$2&quot;</span>");
+        
+        return line;
+    }
+    
+    /**
+     * 简化的CSS语法高亮
+     */
+    private String highlightCssSimple(String line) {
+        line = escapeHtml(line);
+        
+        // CSS选择器
+        line = line.replaceAll("^([.#]?[a-zA-Z][a-zA-Z0-9_-]*)", "<span class=\"type\">$1</span>");
+        
+        // CSS属性
+        line = line.replaceAll("([a-zA-Z-]+):", "<span class=\"function\">$1</span>:");
+        
+        // CSS值
+        line = line.replaceAll(":([^;]+);", ": <span class=\"string\">$1</span>;");
+        
+        return line;
+    }
+    
+    /**
+     * 简化的JSON语法高亮
+     */
+    private String highlightJsonSimple(String line) {
+        line = escapeHtml(line);
+        
+        // JSON键
+        line = line.replaceAll("&quot;([^&]+?)&quot;:", "<span class=\"function\">&quot;$1&quot;</span>:");
+        
+        // JSON字符串值
+        line = line.replaceAll(":&quot;([^&]*)&quot;", ": <span class=\"string\">&quot;$1&quot;</span>");
+        
+        // JSON数字、布尔值、null
+        line = line.replaceAll("\\b(true|false|null)\\b", "<span class=\"keyword\">$1</span>");
+        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span class=\"number\">$1</span>");
+        
+        return line;
+    }
+    
+    /**
+     * 简化的SQL语法高亮
+     */
+    private String highlightSqlSimple(String line) {
+        line = escapeHtml(line);
+        
+        // 处理字符串
+        line = line.replaceAll("'([^']*)'", "<span class=\"string\">'$1'</span>");
+        
+        // 处理数字
+        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span class=\"number\">$1</span>");
+        
+        // 处理关键字
+        String[] sqlKeywords = {"SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "CREATE", 
+                               "TABLE", "INDEX", "DROP", "ALTER", "JOIN", "INNER", "LEFT", "RIGHT",
+                               "ON", "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "OFFSET", "UNION",
+                               "AND", "OR", "NOT", "NULL", "TRUE", "FALSE", "AS", "DISTINCT"};
+        
+        for (String keyword : sqlKeywords) {
+            line = line.replaceAll("\\b" + keyword.toLowerCase() + "\\b(?![^<]*>)", "<span class=\"keyword\">" + keyword.toLowerCase() + "</span>");
+            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*>)", "<span class=\"keyword\">" + keyword + "</span>");
+        }
+        
+        return line;
     }
     
     /**
@@ -77,455 +564,222 @@ public class MarkdownProcessor {
      * 获取主题CSS
      */
     private String getCssForTheme(String theme) {
-        switch (theme) {
-            case "暗黑":
+        // 只使用暗黑主题
                 return getDarkThemeCss();
-            case "简洁":
-                return getMinimalThemeCss();
-            case "GitHub":
-            default:
-                return getGitHubThemeCss();
-        }
     }
     
-    private String getGitHubThemeCss() {
-        return 
-            ".markdown-body {" +
-            "  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;" +
-            "  font-size: 16px;" +
-            "  line-height: 1.6;" +
-            "  color: #24292f;" +
-            "  background-color: #ffffff;" +
-            "  padding: 20px;" +
-            "  max-width: 1000px;" +
-          
-            "  margin: 0 auto;" +
-            "}" +
-            ".markdown-body p {" +
-            "  margin: 0 0 16px 0;" +
-            "  line-height: 1.6;" +
-            "}" +
-            ".markdown-body h1, .markdown-body h2 {" +
-            "  border-bottom: 1px solid #d0d7de;" +
-            "  padding-bottom: 0.3em;" +
-            "  margin-top: 24px;" +
-            "  margin-bottom: 16px;" +
-            "}" +
-            ".markdown-body h1 { font-size: 2em; }" +
-            ".markdown-body h2 { font-size: 1.5em; }" +
-            ".markdown-body h3 { font-size: 1.25em; margin: 20px 0 16px 0; }" +
-            ".markdown-body h4, .markdown-body h5, .markdown-body h6 { margin: 16px 0 12px 0; }" +
-            ".markdown-body code {" +
-            "  background-color: rgba(175, 184, 193, 0.2);" +
-            "  padding: 0.2em 0.4em;" +
-            "  border-radius: 3px;" +
-            "  font-family: 'Courier New', Consolas, 'Liberation Mono', Menlo, monospace;" +
-            "  font-size: 85%;" +
-            "  border: 1px solid #e1e4e8;" +
-            "}" +
-            "/* GitHub主题 - 代码块样式 */" +
-            ".code-block-container {" +
-            "  margin: 16px 0;" +
-            "  border-radius: 6px;" +
-            "  background-color: #f6f8fa;" +
-            "  border: 1px solid #e1e4e8;" +
-            "  padding: 16px;" +
-            "  overflow-x: auto;" +
-            "  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;" +
-            "  font-size: 14px;" +
-            "  line-height: 1.4;" +
-            "}" +
-            ".code-line {" +
-            "  margin: 0;" +
-            "  padding: 0;" +
-            "  color: #24292f;" +
-            "  white-space: pre;" +
-            "}" +
-            ".code-block-pre {" +
-            "  margin: 0 !important;" +
-            "  padding: 16px !important;" +
-            "  background-color: transparent !important;" +
-            "  border: none !important;" +
-            "  white-space: pre !important;" +
-            "  overflow-x: auto;" +
-            "  font-family: 'Consolas', 'Monaco', 'Courier New', monospace !important;" +
-            "  font-size: 14px !important;" +
-            "  line-height: 1.4 !important;" +
-            "  tab-size: 4;" +
-            "}" +
-            ".code-block-code {" +
-            "  font-family: inherit !important;" +
-            "  font-size: inherit !important;" +
-            "  color: #24292f !important;" +
-            "  background-color: transparent !important;" +
-            "  padding: 0 !important;" +
-            "  margin: 0 !important;" +
-            "  white-space: pre !important;" +
-            "  display: block !important;" +
-            "  line-height: inherit !important;" +
-            "  word-wrap: normal !important;" +
-            "  word-break: normal !important;" +
-            "  overflow-wrap: normal !important;" +
-            "}" +
-            "/* 兼容性：保留原有样式 */" +
-            ".markdown-body pre {" +
-            "  background-color: #f6f8fa;" +
-            "  border: 1px solid #e1e4e8;" +
-            "  border-radius: 6px;" +
-            "  padding: 16px;" +
-            "  overflow-x: auto;" +
-            "  margin: 0 0 16px 0;" +
-            "  line-height: 1.45;" +
-            "  white-space: pre !important;" +
-            "  tab-size: 4;" +
-            "  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;" +
-            "  font-size: 14px;" +
-            "}" +
-            ".markdown-body pre code {" +
-            "  background-color: transparent !important;" +
-            "  border: none !important;" +
-            "  padding: 0 !important;" +
-            "  margin: 0 !important;" +
-            "  font-size: 14px !important;" +
-            "  color: #24292f;" +
-            "  white-space: pre !important;" +
-            "  word-wrap: normal !important;" +
-            "  tab-size: 4 !important;" +
-            "  font-family: inherit !important;" +
-            "  display: block !important;" +
-            "  line-height: 1.45 !important;" +
-            "}" +
-            ".markdown-body blockquote {" +
-            "  border-left: 0.25em solid #d0d7de;" +
-            "  padding-left: 1em;" +
-            "  color: #656d76;" +
-            "}" +
-            ".markdown-body ul, .markdown-body ol {" +
-            "  padding-left: 2em;" +
-            "  margin: 0 0 16px 0;" +
-            "}" +
-            ".markdown-body li {" +
-            "  margin: 0.25em 0;" +
-            "  line-height: 1.5;" +
-            "}" +
-            ".markdown-body ul {" +
-            "  list-style-type: disc;" +
-            "}" +
-            ".markdown-body ol {" +
-            "  list-style-type: decimal;" +
-            "}" +
-            ".markdown-body table {" +
-            "  border-collapse: collapse;" +
-            "  width: 100%;" +
-            "}" +
-            ".markdown-body th, .markdown-body td {" +
-            "  border: 1px solid #d0d7de;" +
-            "  padding: 8px 12px;" +
-            "  text-align: left;" +
-            "}" +
-            ".markdown-body th {" +
-            "  background-color: #f6f8fa;" +
-            "  font-weight: 600;" +
-            "}" +
-            ".markdown-body table {" +
-            "  border-collapse: collapse;" +
-            "  margin: 0 0 16px 0;" +
-            "  width: 100%;" +
-            "  overflow: auto;" +
-            "}";
-    }
     
     private String getDarkThemeCss() {
         return 
-            ".markdown-body {" +
-            "  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;" +
-            "  font-size: 16px;" +
-            "  line-height: 1.6;" +
+            "* {" +
+            "  border: none !important;" +  // 强制移除所有默认边框
+            "}" +
+            "body {" +
+            "  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;" +
+            "  font-size: 13px;" +
             "  color: #c9d1d9;" +
-            "  background-color: #0d1117;" +
-            "  padding: 20px;" +
-            "  max-width: 1000px;" +
-            "  margin: 0 auto;" +
-            "}" +
-            ".markdown-body p {" +
-            "  margin: 0 0 16px 0;" +
+            "  background-color: #0d1117 !important;" +
+            "  margin: 16px;" +
             "  line-height: 1.6;" +
+            "  border: none !important;" +
             "}" +
-            ".markdown-body h1, .markdown-body h2 {" +
-            "  border-bottom: 1px solid #30363d;" +
-            "  padding-bottom: 0.3em;" +
+            "h1 {" +
+            "  font-size: 22px;" +
             "  color: #f0f6fc;" +
-            "  margin-top: 24px;" +
-            "  margin-bottom: 16px;" +
+            "  border-bottom: 1px solid #30363d !important;" +
+            "  border-top: none !important;" +
+            "  border-left: none !important;" +
+            "  border-right: none !important;" +
+            "  margin: 24px 0 16px 0;" +
+            "  padding-bottom: 8px;" +
+            "  font-weight: 600;" +
             "}" +
-            ".markdown-body code {" +
-            "  background-color: rgba(110, 118, 129, 0.4);" +
-            "  color: #e6edf3;" +
-            "  padding: 0.2em 0.4em;" +
-            "  border-radius: 3px;" +
-            "  font-family: 'Courier New', Consolas, 'Liberation Mono', Menlo, monospace;" +
-            "  font-size: 85%;" +
-            "  border: 1px solid #30363d;" +
+            "h2 {" +
+            "  font-size: 18px;" +
+            "  color: #f0f6fc;" +
+            "  border-bottom: 1px solid #30363d !important;" +
+            "  border-top: none !important;" +
+            "  border-left: none !important;" +
+            "  border-right: none !important;" +
+            "  margin: 20px 0 12px 0;" +
+            "  padding-bottom: 6px;" +
+            "  font-weight: 600;" +
             "}" +
-            "/* 暗黑主题 - 代码块样式 */" +
-            ".code-block-container {" +
-            "  margin: 16px 0;" +
-            "  border-radius: 6px;" +
+            "h3 {" +
+            "  font-size: 16px;" +
+            "  color: #f0f6fc;" +
+            "  margin: 16px 0 8px 0;" +
+            "  border: none !important;" +
+            "  font-weight: 600;" +
+            "}" +
+            "h4 {" +
+            "  font-size: 14px;" +
+            "  color: #f0f6fc;" +
+            "  margin: 12px 0 6px 0;" +
+            "  border: none !important;" +
+            "  font-weight: 600;" +
+            "}" +
+            "h5, h6 {" +
+            "  font-size: 13px;" +
+            "  color: #f0f6fc;" +
+            "  margin: 10px 0 4px 0;" +
+            "  border: none !important;" +
+            "  font-weight: 600;" +
+            "}" +
+            "p {" +
+            "  margin-bottom: 12px;" +
+            "  line-height: 1.6;" +
+            "  border: none !important;" +
+            "}" +
+            "code {" +
+            "  font-family: Consolas, monospace;" +
             "  background-color: #161b22;" +
+            "  color: #e6edf3;" +
+            "  padding: 2px 4px;" +
+            "  border: 1px solid #30363d;" +
+            "  font-size: 13px;" +
+            "}" +
+            "pre {" +
+            "  font-family: Consolas, monospace;" +
+            "  background-color: #161b22;" +
+            "  color: #e6edf3;" +
             "  border: 1px solid #30363d;" +
             "  padding: 16px;" +
-            "  overflow-x: auto;" +
-            "  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;" +
+            "  margin: 16px 0;" +
+            "  white-space: pre;" +
             "  font-size: 14px;" +
             "  line-height: 1.4;" +
             "}" +
-            ".code-line {" +
-            "  margin: 0;" +
-            "  padding: 0;" +
-            "  color: #e6edf3;" +
-            "  white-space: pre;" +
-            "}" +
-            ".code-block-pre {" +
-            "  margin: 0 !important;" +
-            "  padding: 16px !important;" +
-            "  background-color: transparent !important;" +
-            "  border: none !important;" +
-            "  white-space: pre !important;" +
-            "  overflow-x: auto;" +
-            "  font-family: 'Consolas', 'Monaco', 'Courier New', monospace !important;" +
-            "  font-size: 14px !important;" +
-            "  line-height: 1.4 !important;" +
-            "  tab-size: 4;" +
-            "}" +
-            ".code-block-code {" +
-            "  font-family: inherit !important;" +
-            "  font-size: inherit !important;" +
-            "  color: #e6edf3 !important;" +
-            "  background-color: transparent !important;" +
-            "  padding: 0 !important;" +
-            "  margin: 0 !important;" +
-            "  white-space: pre !important;" +
-            "  display: block !important;" +
-            "  line-height: inherit !important;" +
-            "  word-wrap: normal !important;" +
-            "  word-break: normal !important;" +
-            "  overflow-wrap: normal !important;" +
-            "}" +
-            "/* 兼容性：保留原有样式 */" +
-            ".markdown-body pre {" +
-            "  background-color: #161b22;" +
-            "  border: 1px solid #30363d;" +
-            "  border-radius: 6px;" +
-            "  padding: 16px;" +
-            "  overflow-x: auto;" +
-            "  margin: 0 0 16px 0;" +
-            "  line-height: 1.45;" +
-            "  white-space: pre !important;" +
-            "  tab-size: 4;" +
-            "  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;" +
-            "  font-size: 14px;" +
-            "}" +
-            ".markdown-body pre code {" +
-            "  background-color: transparent !important;" +
-            "  border: none !important;" +
-            "  padding: 0 !important;" +
-            "  margin: 0 !important;" +
-            "  font-size: 14px !important;" +
-            "  color: #e6edf3;" +
-            "  white-space: pre !important;" +
-            "  word-wrap: normal !important;" +
-            "  tab-size: 4 !important;" +
-            "  font-family: inherit !important;" +
-            "  display: block !important;" +
-            "  line-height: 1.45 !important;" +
-            "}" +
-            ".markdown-body blockquote {" +
-            "  border-left: 0.25em solid #30363d;" +
-            "  padding-left: 1em;" +
+            "blockquote {" +
+            "  border-left: 4px solid #30363d !important;" +
+            "  border-top: none !important;" +
+            "  border-right: none !important;" +
+            "  border-bottom: none !important;" +
+            "  padding-left: 16px;" +
+            "  margin: 12px 0;" +
             "  color: #8b949e;" +
+            "  font-style: italic;" +
             "}" +
-            ".markdown-body ul, .markdown-body ol {" +
-            "  padding-left: 2em;" +
-            "  margin: 0 0 16px 0;" +
-            "}" +
-            ".markdown-body li {" +
-            "  margin: 0.25em 0;" +
-            "  line-height: 1.5;" +
-            "  color: #c9d1d9;" +
-            "}" +
-            ".markdown-body ul {" +
+            "ul {" +
+            "  margin: 12px 0;" +
+            "  padding-left: 24px;" +
             "  list-style-type: disc;" +
+            "  border: none !important;" +
             "}" +
-            ".markdown-body ol {" +
+            "ol {" +
+            "  margin: 12px 0;" +
+            "  padding-left: 24px;" +
+            "  list-style-type: decimal;" +
+            "  border: none !important;" +
+            "}" +
+            "ul ul {" +
+            "  margin: 4px 0;" +
+            "  padding-left: 20px;" +
+            "  list-style-type: circle;" +
+            "}" +
+            "ul ul ul {" +
+            "  list-style-type: square;" +
+            "}" +
+            "ol ol {" +
+            "  margin: 4px 0;" +
+            "  padding-left: 20px;" +
+            "  list-style-type: lower-alpha;" +
+            "}" +
+            "ol ol ol {" +
+            "  list-style-type: lower-roman;" +
+            "}" +
+            "/* 混合嵌套样式 */" +
+            "ul ol {" +
+            "  margin: 4px 0;" +
+            "  padding-left: 20px;" +
             "  list-style-type: decimal;" +
             "}" +
-            ".markdown-body table {" +
+            "ol ul {" +
+            "  margin: 4px 0;" +
+            "  padding-left: 20px;" +
+            "  list-style-type: disc;" +
+            "}" +
+            "ul ol ul {" +
+            "  list-style-type: circle;" +
+            "}" +
+            "ol ul ol {" +
+            "  list-style-type: lower-alpha;" +
+            "}" +
+            "li {" +
+            "  margin: 3px 0;" +
+            "  line-height: 1.5;" +
+            "  border: none !important;" +
+            "}" +
+            "li p {" +
+            "  margin: 0;" +
+            "}" +
+            "/* 确保列表项内容对齐 */" +
+            "li > ul, li > ol {" +
+            "  margin-top: 4px;" +
+            "  margin-bottom: 4px;" +
+            "}" +
+            "table {" +
             "  border-collapse: collapse;" +
             "  width: 100%;" +
+            "  margin: 16px 0;" +
+            "  border: none !important;" +
+            "  background-color: transparent;" +
             "}" +
-            ".markdown-body th, .markdown-body td {" +
-            "  border: 1px solid #30363d;" +
+            "th, td {" +
+            "  border: 1px solid #30363d !important;" +
             "  padding: 8px 12px;" +
             "  text-align: left;" +
+            "  color: #c9d1d9;" +
+            "  vertical-align: top;" +
             "}" +
-            ".markdown-body th {" +
-            "  background-color: #161b22;" +
+            "th {" +
+            "  background-color: #21262d;" +
             "  font-weight: 600;" +
             "  color: #f0f6fc;" +
             "}" +
-            ".markdown-body table {" +
-            "  border-collapse: collapse;" +
-            "  margin: 0 0 16px 0;" +
-            "  width: 100%;" +
-            "  overflow: auto;" +
+            "tr:nth-child(even) {" +
+            "  background-color: #161b22;" +
+            "}" +
+            "strong {" +
+            "  font-weight: 600;" +
+            "  color: #f0f6fc;" +
+            "  border: none !important;" +
+            "}" +
+            "em {" +
+            "  font-style: italic;" +
+            "  color: #e6edf3;" +
+            "  border: none !important;" +
+            "}" +
+            "a {" +
+            "  color: #58a6ff;" +
+            "  text-decoration: underline;" +
+            "  border: none !important;" +
+            "}" +
+            "a:hover {" +
+            "  color: #79c0ff;" +
+            "  text-decoration: none;" +
+            "}" +
+            "hr {" +
+            "  border: none;" +
+            "  height: 1px;" +
+            "  background-color: #30363d;" +
+            "  margin: 24px 0;" +
+            "}" +
+            "img {" +
+            "  max-width: 100%;" +
+            "  height: auto;" +
+            "  border: 1px solid #30363d;" +
+            "}" +
+            "del {" +
+            "  text-decoration: line-through;" +
+            "  color: #8b949e;" +
             "}";
     }
     
-    private String getMinimalThemeCss() {
-        return 
-            ".markdown-body {" +
-            "  font-family: Georgia, 'Times New Roman', serif;" +
-            "  font-size: 18px;" +
-            "  line-height: 1.7;" +
-            "  color: #333;" +
-            "  background-color: #fff;" +
-            "  padding: 40px;" +
-            "  max-width: 800px;" +
-            "  margin: 0 auto;" +
-            "}" +
-            ".markdown-body p {" +
-            "  margin: 0 0 18px 0;" +
-            "  line-height: 1.7;" +
-            "}" +
-            ".markdown-body h1, .markdown-body h2, .markdown-body h3 {" +
-            "  font-family: 'Helvetica Neue', Arial, sans-serif;" +
-            "  margin-top: 32px;" +
-            "  margin-bottom: 18px;" +
-            "}" +
-            ".markdown-body h1 { font-size: 2.2em; }" +
-            ".markdown-body h2 { font-size: 1.8em; }" +
-            ".markdown-body h3 { font-size: 1.4em; }" +
-            ".markdown-body code {" +
-            "  background-color: #f5f5f5;" +
-            "  padding: 0.2em 0.4em;" +
-            "  border-radius: 3px;" +
-            "  font-family: 'Courier New', Consolas, 'Liberation Mono', Menlo, monospace;" +
-            "  font-size: 85%;" +
-            "  border: 1px solid #e0e0e0;" +
-            "}" +
-            "/* 简洁主题 - 代码块样式 */" +
-            ".code-block-container {" +
-            "  margin: 18px 0;" +
-            "  border-radius: 6px;" +
-            "  background-color: #f8f8f8;" +
-            "  border: 1px solid #e0e0e0;" +
-            "  padding: 20px;" +
-            "  overflow-x: auto;" +
-            "  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;" +
-            "  font-size: 14px;" +
-            "  line-height: 1.5;" +
-            "}" +
-            ".code-line {" +
-            "  margin: 0;" +
-            "  padding: 0;" +
-            "  color: #333;" +
-            "  white-space: pre;" +
-            "}" +
-            ".code-block-pre {" +
-            "  margin: 0 !important;" +
-            "  padding: 20px !important;" +
-            "  background-color: transparent !important;" +
-            "  border: none !important;" +
-            "  white-space: pre !important;" +
-            "  overflow-x: auto;" +
-            "  font-family: 'Consolas', 'Monaco', 'Courier New', monospace !important;" +
-            "  font-size: 14px !important;" +
-            "  line-height: 1.4 !important;" +
-            "  tab-size: 4;" +
-            "}" +
-            ".code-block-code {" +
-            "  font-family: inherit !important;" +
-            "  font-size: inherit !important;" +
-            "  color: #333 !important;" +
-            "  background-color: transparent !important;" +
-            "  padding: 0 !important;" +
-            "  margin: 0 !important;" +
-            "  white-space: pre !important;" +
-            "  display: block !important;" +
-            "  line-height: inherit !important;" +
-            "  word-wrap: normal !important;" +
-            "  word-break: normal !important;" +
-            "  overflow-wrap: normal !important;" +
-            "}" +
-            "/* 兼容性：保留原有样式 */" +
-            ".markdown-body pre {" +
-            "  background-color: #f8f8f8;" +
-            "  border: 1px solid #e0e0e0;" +
-            "  border-radius: 6px;" +
-            "  padding: 20px;" +
-            "  overflow-x: auto;" +
-            "  margin: 0 0 18px 0;" +
-            "  line-height: 1.5;" +
-            "  white-space: pre !important;" +
-            "  tab-size: 4;" +
-            "  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;" +
-            "  font-size: 14px;" +
-            "}" +
-            ".markdown-body pre code {" +
-            "  background-color: transparent !important;" +
-            "  border: none !important;" +
-            "  padding: 0 !important;" +
-            "  margin: 0 !important;" +
-            "  font-size: 14px !important;" +
-            "  color: #333;" +
-            "  white-space: pre !important;" +
-            "  word-wrap: normal !important;" +
-            "  tab-size: 4 !important;" +
-            "  font-family: inherit !important;" +
-            "  display: block !important;" +
-            "  line-height: 1.5 !important;" +
-            "}" +
-            ".markdown-body ul, .markdown-body ol {" +
-            "  padding-left: 2em;" +
-            "  margin: 0 0 18px 0;" +
-            "}" +
-            ".markdown-body li {" +
-            "  margin: 0.3em 0;" +
-            "  line-height: 1.6;" +
-            "  color: #333;" +
-            "}" +
-            ".markdown-body ul {" +
-            "  list-style-type: disc;" +
-            "}" +
-            ".markdown-body ol {" +
-            "  list-style-type: decimal;" +
-            "}" +
-            ".markdown-body del {" +
-            "  text-decoration: line-through;" +
-            "  color: #666;" +
-            "}" +
-            ".markdown-body hr {" +
-            "  border: none;" +
-            "  border-top: 1px solid #e0e0e0;" +
-            "  margin: 24px 0;" +
-            "  height: 0;" +
-            "}";
-    }
     
     private String getJavaScript() {
-        return 
-            "// 平滑滚动" +
-            "function scrollToLine(line) {" +
-            "  var target = line * 24;" +
-            "  window.scrollTo({top: target, behavior: 'smooth'});" +
-            "}" +
-            "// 代码块高亮支持" +
-            "document.addEventListener('DOMContentLoaded', function() {" +
-            "  var codeBlocks = document.querySelectorAll('pre code');" +
-            "  for (var i = 0; i < codeBlocks.length; i++) {" +
-            "    codeBlocks[i].classList.add('language-' + (codeBlocks[i].className || 'text'));" +
-            "  }" +
-            "});";
+        // JEditorPane 对 JavaScript 支持有限，简化或移除
+        return "";
     }
     
     private String createEmptyHtml() {
@@ -563,8 +817,7 @@ public class MarkdownProcessor {
         html = html.replaceAll("\\*\\*(.+?)\\*\\*", "<strong>$1</strong>");
         html = html.replaceAll("\\*(.+?)\\*", "<em>$1</em>");
         
-        // 先处理代码块（必须在行内代码之前处理，避免冲突）
-        // 重要：保持代码块内的所有空格、制表符和换行
+        // 处理代码块（简化版本，兼容JEditorPane）
         html = processCodeBlocksSimple(html);
         
         // 处理行内代码（在代码块之后处理）
@@ -579,11 +832,8 @@ public class MarkdownProcessor {
         // 处理引用
         html = html.replaceAll("(?m)^> (.+)$", "<blockquote>$1</blockquote>");
         
-        // 处理有序列表
-        html = html.replaceAll("(?m)^\\d+\\. (.+)$", "<li>$1</li>");
-        
-        // 处理无序列表
-        html = html.replaceAll("(?m)^[-*+] (.+)$", "<li>$1</li>");
+        // 处理列表（支持多级嵌套）
+        html = processNestedLists(html);
         
         // 处理水平分割线
         html = html.replaceAll("(?m)^---+$", "<hr>");
@@ -601,6 +851,98 @@ public class MarkdownProcessor {
         
         // 分行处理，组装最终HTML
         return processLinesImproved(html);
+    }
+    
+    private String processNestedLists(String html) {
+        String[] lines = html.split("\\n");
+        StringBuilder result = new StringBuilder();
+        java.util.List<ListLevel> listStack = new java.util.ArrayList<>();
+        
+        for (String line : lines) {
+            if (isListItem(line)) {
+                processListItem(result, line, listStack);
+            } else {
+                // 不是列表项，关闭所有打开的列表
+                closeAllLists(result, listStack);
+                result.append(line).append("\n");
+            }
+        }
+        
+        // 关闭剩余的列表
+        closeAllLists(result, listStack);
+        
+        return result.toString();
+    }
+    
+    private boolean isListItem(String line) {
+        return line.matches("^( *)(\\d+\\.|[-*+]) (.+)$");
+    }
+    
+    private void processListItem(StringBuilder result, String line, java.util.List<ListLevel> listStack) {
+        // 计算缩进级别（每4个空格为一级，兼容2个空格）
+        int indent = 0;
+        for (char c : line.toCharArray()) {
+            if (c == ' ') indent++;
+            else break;
+        }
+        int level = Math.max(0, indent / 2); // 每2个空格为一级
+        
+        // 提取列表内容和类型
+        String listContent = line.replaceAll("^( *)(\\d+\\.|[-*+]) (.+)$", "$3");
+        boolean isOrdered = line.matches("^( *)\\d+\\. (.+)$");
+        String listType = isOrdered ? "ol" : "ul";
+        
+        // 处理列表层级
+        adjustListStack(result, listStack, level, listType);
+        
+        // 添加列表项
+        result.append("<li>").append(listContent).append("</li>\n");
+    }
+    
+    private void adjustListStack(StringBuilder result, java.util.List<ListLevel> listStack, int level, String listType) {
+        // 关闭比当前级别深的列表
+        while (!listStack.isEmpty() && listStack.get(listStack.size() - 1).level > level) {
+            ListLevel closingLevel = listStack.remove(listStack.size() - 1);
+            result.append("</").append(closingLevel.type).append(">\n");
+        }
+        
+        // 检查当前级别
+        if (listStack.isEmpty() || listStack.get(listStack.size() - 1).level < level) {
+            // 需要开始新的更深层级的列表
+            result.append("<").append(listType).append(">\n");
+            listStack.add(new ListLevel(level, listType));
+        } else if (listStack.get(listStack.size() - 1).level == level) {
+            // 同级别，检查类型是否相同
+            ListLevel currentLevel = listStack.get(listStack.size() - 1);
+            if (!currentLevel.type.equals(listType)) {
+                // 类型不同，关闭当前列表，开始新列表
+                listStack.remove(listStack.size() - 1);
+                result.append("</").append(currentLevel.type).append(">\n");
+                result.append("<").append(listType).append(">\n");
+                listStack.add(new ListLevel(level, listType));
+            }
+            // 如果类型相同，继续使用当前列表
+        }
+    }
+    
+    private void closeAllLists(StringBuilder result, java.util.List<ListLevel> listStack) {
+        // 从最深层开始关闭所有列表
+        for (int i = listStack.size() - 1; i >= 0; i--) {
+            ListLevel level = listStack.get(i);
+            result.append("</").append(level.type).append(">\n");
+        }
+        listStack.clear();
+    }
+    
+    // 辅助类来存储列表层级信息
+    private static class ListLevel {
+        final int level;
+        final String type;
+        
+        ListLevel(int level, String type) {
+            this.level = level;
+            this.type = type;
+        }
     }
     
     private String processSimpleTables(String html) {
@@ -661,243 +1003,324 @@ public class MarkdownProcessor {
     }
     
     private String processCodeBlocksSimple(String html) {
-        System.out.println("🔄 使用全新的简单代码块处理器");
-        
-        // 使用最简单的字符串替换方法，避免复杂的正则表达式和状态机
         StringBuilder result = new StringBuilder();
         int index = 0;
         
         while (index < html.length()) {
             int codeStart = html.indexOf("```", index);
             if (codeStart == -1) {
-                // 没有更多代码块
                 result.append(html.substring(index));
                 break;
             }
             
-            // 添加代码块前的内容
             result.append(html.substring(index, codeStart));
             
-            // 查找代码块结束
             int lineEnd = html.indexOf('\n', codeStart);
             if (lineEnd == -1) {
-                // 没有换行，不是有效的代码块
                 result.append(html.substring(codeStart));
                 break;
             }
             
             // 提取语言标识
-            String language = html.substring(codeStart + 3, lineEnd).trim();
-            System.out.println("🎯 发现代码块，语言: '" + language + "'");
+            String language = html.substring(codeStart + 3, lineEnd).trim().toLowerCase();
             
-            // 查找代码块结束标记
             int codeEnd = html.indexOf("\n```", lineEnd);
             if (codeEnd == -1) {
-                // 没有结束标记，处理到最后
                 String code = html.substring(lineEnd + 1);
-                result.append(createCodeBlockHtml(language, code));
+                result.append(createHighlightedCodeBlock(code, language));
                 break;
             }
             
-            // 提取代码内容（保持原始格式）
             String code = html.substring(lineEnd + 1, codeEnd);
-            System.out.println("📝 提取的代码:");
-            System.out.println("   长度: " + code.length() + " 字符");
-            System.out.println("   行数: " + code.split("\n").length);
-            System.out.println("   内容预览: '" + code.substring(0, Math.min(100, code.length())).replace("\n", "\\n").replace("\t", "\\t") + "'");
+            result.append(createHighlightedCodeBlock(code, language));
             
-            // 生成HTML（使用特殊的保格式方法）
-            result.append(createCodeBlockHtml(language, code));
-            
-            // 继续处理后续内容
-            index = codeEnd + 4; // 跳过 "\n```"
+            index = codeEnd + 4;
         }
         
         return result.toString();
     }
     
-    private String processCodeBlocks(String html) {
+    /**
+     * 创建简单的代码块HTML（兼容JEditorPane）
+     */
+    private String createSimpleCodeBlock(String code) {
+        if (code == null || code.trim().isEmpty()) {
+            return "<pre></pre>";
+        }
+        
+        // 简单的HTML转义，保持原始空格和制表符
+        String escapedCode = code.replace("&", "&amp;")
+                                .replace("<", "&lt;")
+                                .replace(">", "&gt;")
+                                .replace("\"", "&quot;")
+                                .replace("'", "&#39;");
+        
+        return "<pre>" + escapedCode + "</pre>";
+    }
+    
+    /**
+     * 创建带语法高亮的代码块HTML
+     */
+    private String createHighlightedCodeBlock(String code, String language) {
+        if (code == null || code.trim().isEmpty()) {
+            return "<pre></pre>";
+        }
+        
+        // 分行处理，添加语法高亮
+        String[] lines = code.split("\n");
         StringBuilder result = new StringBuilder();
         
-        // 使用正则表达式匹配代码块，保持完整的内容结构
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("```([a-zA-Z0-9+#-]*)\\n(.*?)\\n```", java.util.regex.Pattern.DOTALL);
-        java.util.regex.Matcher matcher = pattern.matcher(html);
-        
-        int lastEnd = 0;
-        while (matcher.find()) {
-            // 添加代码块前的内容
-            result.append(html.substring(lastEnd, matcher.start()));
-            
-            // 处理代码块
-            String language = matcher.group(1) != null ? matcher.group(1).trim() : "";
-            String code = matcher.group(2) != null ? matcher.group(2) : "";
-            
-            // 关键：完全保持代码的原始格式，包括前导空格
-            result.append("<pre><code class=\"language-").append(language).append("\">")
-                  .append(escapeHtmlPreserveSpaces(code))
-                  .append("</code></pre>");
-                  
-            lastEnd = matcher.end();
-        }
-        
-        // 添加剩余内容
-        result.append(html.substring(lastEnd));
-        
-        return result.toString();
-    }
-    
-    private String escapeHtml(String text) {
-        if (text == null) return "";
-        return text.replace("&", "&amp;")
-                   .replace("<", "&lt;")
-                   .replace(">", "&gt;")
-                   .replace("\"", "&quot;")
-                   .replace("'", "&#39;");
-    }
-    
-    private String createCodeBlockHtml(String language, String code) {
-        System.out.println("🔨 生成代码块HTML:");
-        System.out.println("   语言: '" + language + "'");
-        System.out.println("   原始代码长度: " + code.length());
-        System.out.println("   原始代码行数: " + (code.split("\n").length));
-        
-        // 🚨 使用最原始但最可靠的方法：手动处理每一行
-        String[] lines = code.split("\n");
-        StringBuilder htmlContent = new StringBuilder();
-        
-        for (int i = 0; i < lines.length; i++) {
-            String line = lines[i];
-            // HTML转义但保持空格
-            String escapedLine = escapeHtmlButKeepSpaces(line);
-            
-            htmlContent.append("<div class=\"code-line\">");
-            htmlContent.append(escapedLine);
-            htmlContent.append("</div>");
-            
-            if (i < lines.length - 1) {
-                // 不是最后一行，添加换行标记
-                System.out.println("   行 " + (i+1) + ": '" + escapedLine + "'");
+        for (String line : lines) {
+            String highlightedLine = applySyntaxHighlighting(line, language, currentTheme);
+            result.append(highlightedLine);
+            if (lines.length > 1) {
+                result.append("\n");
             }
         }
         
-        // 生成基于div行结构的HTML（移除硬编码的背景色，使用CSS主题）
-        String html = "<div class=\"code-block-container\">" +
-                     htmlContent.toString() +
-                     "</div>";
-        
-        System.out.println("🏗️ 生成的HTML长度: " + html.length());
-        System.out.println("🏗️ 总行数: " + lines.length);
-        System.out.println("🏗️ HTML预览: " + html.substring(0, Math.min(300, html.length())));
-        
-        return html;
+        return "<pre>" + result.toString() + "</pre>";
     }
     
-    private String escapeHtmlButKeepSpaces(String line) {
-        if (line == null) return "";
-        
-        // 分析这一行
-        int spaceCount = 0;
-        int tabCount = 0;
-        for (char c : line.toCharArray()) {
-            if (c == ' ') spaceCount++;
-            else if (c == '\t') tabCount++;
+    /**
+     * 为单行代码应用语法高亮
+     */
+    private String applySyntaxHighlighting(String line, String language, String theme) {
+        if (line == null) {
+            return "";
         }
         
-        // HTML转义，但用&nbsp;替换空格以确保保持
-        String result = line;
-        result = result.replace("&", "&amp;");  // 必须第一个处理
-        result = result.replace("<", "&lt;");
-        result = result.replace(">", "&gt;");
-        result = result.replace("\"", "&quot;");
-        result = result.replace("'", "&#39;");
+        // 如果是空行，返回空行
+        if (line.trim().isEmpty()) {
+            return line;
+        }
         
-        // 🔑 关键：将前导空格替换为&nbsp;以确保缩进保持
+        // 先处理制表符和前导空格，保持缩进
         StringBuilder processedLine = new StringBuilder();
-        boolean foundNonSpace = false;
-        for (char c : result.toCharArray()) {
-            if (c == ' ' && !foundNonSpace) {
-                // 前导空格用&nbsp;替换
-                processedLine.append("&nbsp;");
-            } else if (c == '\t' && !foundNonSpace) {
-                // 前导制表符用4个&nbsp;替换
-                processedLine.append("&nbsp;&nbsp;&nbsp;&nbsp;");
+        int i = 0;
+        
+        // 处理前导空格和制表符
+        while (i < line.length()) {
+            char c = line.charAt(i);
+            if (c == ' ') {
+                processedLine.append("&nbsp;"); // 保持空格
+                i++;
+            } else if (c == '\t') {
+                processedLine.append("&nbsp;&nbsp;&nbsp;&nbsp;"); // 制表符转换为4个空格
+                i++;
             } else {
-                foundNonSpace = true;
-                if (c == ' ') {
-                    // 非前导空格也用&nbsp;替换以确保保持
-                    processedLine.append("&nbsp;");
-                } else if (c == '\t') {
-                    // 非前导制表符
-                    processedLine.append("&nbsp;&nbsp;&nbsp;&nbsp;");
-                } else {
-                    processedLine.append(c);
-                }
+                break;
             }
         }
         
-        return processedLine.toString();
-    }
-    
-    private String escapeHtmlButKeepFormatting(String text) {
-        if (text == null) return "";
+        // 处理剩余内容
+        String remaining = line.substring(i);
         
-        // 详细分析原始文本
-        int newlineCount = 0;
-        int spaceCount = 0;
-        int tabCount = 0;
-        for (char c : text.toCharArray()) {
-            if (c == '\n') newlineCount++;
-            else if (c == ' ') spaceCount++;
-            else if (c == '\t') tabCount++;
-        }
-        
-        System.out.println("🔍 原始代码分析:");
-        System.out.println("   总长度: " + text.length());
-        System.out.println("   换行符数量: " + newlineCount);
-        System.out.println("   空格数量: " + spaceCount);
-        System.out.println("   制表符数量: " + tabCount);
-        System.out.println("   前50字符: '" + text.substring(0, Math.min(50, text.length())).replace("\n", "\\n").replace("\t", "\\t") + "'");
-        
-        // 只转义必要的HTML特殊字符，完全保持空格、制表符、换行
-        String result = text;
-        result = result.replace("&", "&amp;");  // 必须第一个处理
-        result = result.replace("<", "&lt;");
-        result = result.replace(">", "&gt;");
-        result = result.replace("\"", "&quot;");
-        result = result.replace("'", "&#39;");
-        
-        // 验证转义后的结果
-        int resultNewlineCount = 0;
-        for (char c : result.toCharArray()) {
-            if (c == '\n') resultNewlineCount++;
-        }
-        
-        System.out.println("🔧 HTML转义完成:");
-        System.out.println("   转义后长度: " + result.length());
-        System.out.println("   转义后换行符: " + resultNewlineCount);
-        System.out.println("   转义后前50字符: '" + result.substring(0, Math.min(50, result.length())).replace("\n", "\\n").replace("\t", "\\t") + "'");
-        
-        return result;
-    }
-    
-    private String escapeHtmlPreserveSpaces(String text) {
-        if (text == null) return "";
-        // 保持所有空格和换行，只转义HTML特殊字符
-        return text.replace("&", "&amp;")
+        // HTML转义剩余内容
+        remaining = remaining.replace("&", "&amp;")
                    .replace("<", "&lt;")
                    .replace(">", "&gt;")
                    .replace("\"", "&quot;")
                    .replace("'", "&#39;");
+        
+        processedLine.append(remaining);
+        
+        // 根据语言应用语法高亮
+        return highlightByLanguage(processedLine.toString(), language, theme);
     }
+    
+    /**
+     * 根据语言应用语法高亮
+     */
+    private String highlightByLanguage(String line, String language, String theme) {
+        if (language == null) language = "";
+        
+        // 始终使用暗黑主题
+        boolean isDark = true;
+        
+        switch (language.toLowerCase()) {
+            case "java":
+                return highlightJava(line, isDark);
+            case "javascript":
+            case "js":
+                return highlightJavaScript(line, isDark);
+            case "python":
+            case "py":
+                return highlightPython(line, isDark);
+            case "html":
+                return highlightHtml(line, isDark);
+            case "css":
+                return highlightCss(line, isDark);
+            case "json":
+                return highlightJson(line, isDark);
+            default:
+                return highlightGeneric(line, isDark);
+        }
+    }
+    
+    /**
+     * Java语法高亮
+     */
+    private String highlightJava(String line, boolean isDark) {
+        // Java关键字
+        String[] keywords = {"public", "private", "protected", "static", "final", "class", "interface", 
+                           "extends", "implements", "import", "package", "void", "int", "String", "boolean",
+                           "if", "else", "for", "while", "do", "switch", "case", "break", "continue", "return",
+                           "new", "this", "super", "try", "catch", "finally", "throw", "throws"};
+        
+        String keywordColor = isDark ? "#ff7b72" : "#cf222e";  // 红色 - GitHub主题使用更鲜明的红色
+        String stringColor = isDark ? "#a5d6ff" : "#0a3069";   // 蓝色 - GitHub主题使用更深的蓝色确保对比度
+        String commentColor = isDark ? "#8b949e" : "#6a737d";  // 灰色 - 保持原色
+        
+        for (String keyword : keywords) {
+            line = line.replaceAll("\\b" + keyword + "\\b", 
+                "<span style='color: " + keywordColor + "; font-weight: bold;'>" + keyword + "</span>");
+        }
+        
+        // 字符串高亮
+        line = line.replaceAll("\"([^\"]*?)\"", 
+            "<span style='color: " + stringColor + ";'>\"$1\"</span>");
+        
+        // 注释高亮
+        line = line.replaceAll("//(.+)$", 
+            "<span style='color: " + commentColor + "; font-style: italic;'>//$1</span>");
+        
+        return line;
+    }
+    
+    /**
+     * JavaScript语法高亮
+     */
+    private String highlightJavaScript(String line, boolean isDark) {
+        String[] keywords = {"var", "let", "const", "function", "return", "if", "else", "for", "while", 
+                           "do", "switch", "case", "break", "continue", "true", "false", "null", "undefined"};
+        
+        String keywordColor = isDark ? "#ff7b72" : "#cf222e";
+        String stringColor = isDark ? "#a5d6ff" : "#0a3069";
+        
+        for (String keyword : keywords) {
+            line = line.replaceAll("\\b" + keyword + "\\b", 
+                "<span style='color: " + keywordColor + "; font-weight: bold;'>" + keyword + "</span>");
+        }
+        
+        // 字符串高亮
+        line = line.replaceAll("\"([^\"]*?)\"", 
+            "<span style='color: " + stringColor + ";'>\"$1\"</span>");
+        line = line.replaceAll("'([^']*?)'", 
+            "<span style='color: " + stringColor + ";'>'$1'</span>");
+        
+        return line;
+    }
+    
+    /**
+     * Python语法高亮
+     */
+    private String highlightPython(String line, boolean isDark) {
+        String[] keywords = {"def", "class", "import", "from", "if", "elif", "else", "for", "while", 
+                           "try", "except", "finally", "return", "yield", "pass", "break", "continue",
+                           "True", "False", "None", "and", "or", "not", "in", "is"};
+        
+        String keywordColor = isDark ? "#ff7b72" : "#cf222e";
+        String stringColor = isDark ? "#a5d6ff" : "#0a3069";
+        String commentColor = isDark ? "#8b949e" : "#6a737d";
+        
+        for (String keyword : keywords) {
+            line = line.replaceAll("\\b" + keyword + "\\b", 
+                "<span style='color: " + keywordColor + "; font-weight: bold;'>" + keyword + "</span>");
+        }
+        
+        // 字符串高亮
+        line = line.replaceAll("\"([^\"]*?)\"", 
+            "<span style='color: " + stringColor + ";'>\"$1\"</span>");
+        line = line.replaceAll("'([^']*?)'", 
+            "<span style='color: " + stringColor + ";'>'$1'</span>");
+        
+        // 注释高亮
+        line = line.replaceAll("#(.+)$", 
+            "<span style='color: " + commentColor + "; font-style: italic;'>#$1</span>");
+        
+        return line;
+    }
+    
+    /**
+     * HTML语法高亮
+     */
+    private String highlightHtml(String line, boolean isDark) {
+        String tagColor = isDark ? "#7ee787" : "#116329";  // 绿色 - GitHub主题使用更深的绿色
+        
+        // HTML标签高亮
+        line = line.replaceAll("&lt;([^&gt;]+)&gt;", 
+            "<span style='color: " + tagColor + "; font-weight: bold;'>&lt;$1&gt;</span>");
+        
+        return line;
+    }
+    
+    /**
+     * CSS语法高亮
+     */
+    private String highlightCss(String line, boolean isDark) {
+        String propertyColor = isDark ? "#ff7b72" : "#cf222e";
+        
+        // CSS属性高亮
+        line = line.replaceAll("([a-zA-Z-]+):", 
+            "<span style='color: " + propertyColor + ";'>$1</span>:");
+        
+        return line;
+    }
+    
+    /**
+     * JSON语法高亮
+     */
+    private String highlightJson(String line, boolean isDark) {
+        String keyColor = isDark ? "#79c0ff" : "#0a3069";
+        String valueColor = isDark ? "#a5d6ff" : "#0a3069";
+        
+        // JSON字符串高亮
+        line = line.replaceAll("\"([^\"]*?)\":", 
+            "<span style='color: " + keyColor + "; font-weight: bold;'>\"$1\"</span>:");
+        line = line.replaceAll(":&nbsp;\"([^\"]*?)\"", 
+            ": <span style='color: " + valueColor + ";'>\"$1\"</span>");
+        
+        return line;
+    }
+    
+    /**
+     * 通用语法高亮
+     */
+    private String highlightGeneric(String line, boolean isDark) {
+        String stringColor = isDark ? "#a5d6ff" : "#0a3069";
+        String numberColor = isDark ? "#79c0ff" : "#0969da";
+        
+        // 字符串高亮
+        line = line.replaceAll("\"([^\"]*?)\"", 
+            "<span style='color: " + stringColor + ";'>\"$1\"</span>");
+        line = line.replaceAll("'([^']*?)'", 
+            "<span style='color: " + stringColor + ";'>'$1'</span>");
+        
+        // 数字高亮
+        line = line.replaceAll("\\b(\\d+)\\b", 
+            "<span style='color: " + numberColor + ";'>$1</span>");
+        
+        return line;
+    }
+    
     
     private String processLinesImproved(String html) {
         String[] lines = html.split("\\n");
         StringBuilder result = new StringBuilder();
         StringBuilder currentParagraph = new StringBuilder();
         boolean inCodeBlock = false;
+        
+        // 处理嵌套列表
+        result.append(processNestedListHTML(lines));
+        
+        return result.toString();
+    }
+    
+    private String processNestedListHTML(String[] lines) {
+        StringBuilder result = new StringBuilder();
+        StringBuilder currentParagraph = new StringBuilder();
+        boolean inCodeBlock = false;
         boolean inList = false;
-        StringBuilder currentList = new StringBuilder();
-        String currentListType = ""; // "ul" or "ol"
         
         for (String line : lines) {
             String trimmedLine = line.trim();
@@ -905,11 +1328,7 @@ public class MarkdownProcessor {
             // 检查是否进入或退出代码块
             if (trimmedLine.startsWith("<pre>")) {
                 inCodeBlock = true;
-                // 结束当前段落
-                if (currentParagraph.length() > 0) {
-                    result.append("<p>").append(currentParagraph.toString().trim()).append("</p>\n");
-                    currentParagraph.setLength(0);
-                }
+                finalizeParagraph(result, currentParagraph);
                 result.append(line).append("\n");
                 continue;
             } else if (trimmedLine.endsWith("</pre>")) {
@@ -918,95 +1337,86 @@ public class MarkdownProcessor {
                 continue;
             }
             
-            // 如果在代码块内，直接添加（保持格式）
+            // 如果在代码块内，直接添加
             if (inCodeBlock) {
                 result.append(line).append("\n");
                 continue;
             }
             
-            // 检查是否是列表项
-            if (trimmedLine.startsWith("<li>")) {
-                // 结束当前段落
-                if (currentParagraph.length() > 0) {
-                    result.append("<p>").append(currentParagraph.toString().trim()).append("</p>\n");
-                    currentParagraph.setLength(0);
+            // 检查是否是列表相关的HTML标签
+            if (trimmedLine.startsWith("<ul>") || trimmedLine.startsWith("<ol>") || 
+                trimmedLine.startsWith("<li>") || trimmedLine.equals("</ul>") || 
+                trimmedLine.equals("</ol>") || trimmedLine.equals("</li>")) {
+                finalizeParagraph(result, currentParagraph);
+                result.append(line).append("\n");
+                inList = trimmedLine.startsWith("<ul>") || trimmedLine.startsWith("<ol>") || inList;
+                if (trimmedLine.equals("</ul>") || trimmedLine.equals("</ol>")) {
+                    inList = false;
                 }
-                
-                // 确定列表类型
-                String listType = (line.matches(".*^\\d+\\. .*")) ? "ol" : "ul";
-                
-                if (!inList) {
-                    // 开始新列表
-                    inList = true;
-                    currentListType = listType;
-                    currentList.setLength(0);
-                    currentList.append("<").append(listType).append(">\n");
-                } else if (!currentListType.equals(listType)) {
-                    // 列表类型改变，结束当前列表，开始新列表
-                    currentList.append("</").append(currentListType).append(">\n");
-                    result.append(currentList.toString());
-                    currentListType = listType;
-                    currentList.setLength(0);
-                    currentList.append("<").append(listType).append(">\n");
-                }
-                
-                currentList.append(line).append("\n");
                 continue;
             }
             
-            // 如果不是列表项但在列表中，结束列表
-            if (inList && !trimmedLine.startsWith("<li>")) {
-                currentList.append("</").append(currentListType).append(">\n");
-                result.append(currentList.toString());
-                inList = false;
-                currentList.setLength(0);
-                currentListType = "";
-            }
-            
-            // 如果是空行
+            // 处理其他HTML标签
             if (trimmedLine.isEmpty()) {
-                // 结束当前段落
-                if (currentParagraph.length() > 0) {
-                    result.append("<p>").append(currentParagraph.toString().trim()).append("</p>\n");
-                    currentParagraph.setLength(0);
+                if (!inList) { // 在列表中不创建空段落
+                    finalizeParagraph(result, currentParagraph);
                 }
-            }
-            // 如果是HTML标签行（标题、引用、表格、分割线等）
-            else if (trimmedLine.startsWith("<h") || trimmedLine.startsWith("<blockquote") || 
+            } else if (trimmedLine.startsWith("<h") || trimmedLine.startsWith("<blockquote") || 
                      trimmedLine.startsWith("<table") || trimmedLine.startsWith("<hr") ||
                      trimmedLine.startsWith("<thead") || trimmedLine.startsWith("<tbody") ||
                      trimmedLine.startsWith("<tr") || trimmedLine.startsWith("<th") ||
                      trimmedLine.startsWith("<td") || trimmedLine.contains("</table>") ||
                      trimmedLine.contains("</thead>") || trimmedLine.contains("</tbody>") ||
                      trimmedLine.contains("</tr>")) {
-                // 先结束当前段落
-                if (currentParagraph.length() > 0) {
-                    result.append("<p>").append(currentParagraph.toString().trim()).append("</p>\n");
-                    currentParagraph.setLength(0);
-                }
-                // 直接添加HTML标签行
+                finalizeParagraph(result, currentParagraph);
                 result.append(line).append("\n");
-            }
+            } else {
             // 普通文本行
-            else {
+                if (!inList) { // 只有在非列表状态下才合并段落
                 if (currentParagraph.length() > 0) {
                     currentParagraph.append(" ");
                 }
                 currentParagraph.append(trimmedLine);
+                } else {
+                    // 在列表中，直接输出
+                    result.append(line).append("\n");
+                }
             }
         }
         
-        // 处理最后的列表
-        if (inList) {
-            currentList.append("</").append(currentListType).append(">\n");
-            result.append(currentList.toString());
-        }
-        
-        // 处理最后的段落
-        if (currentParagraph.length() > 0) {
-            result.append("<p>").append(currentParagraph.toString().trim()).append("</p>\n");
-        }
+        // 完成最后的段落
+        finalizeParagraph(result, currentParagraph);
         
         return result.toString();
+    }
+    
+    private void finalizeParagraph(StringBuilder result, StringBuilder currentParagraph) {
+        if (currentParagraph.length() > 0) {
+            result.append("<p>").append(currentParagraph.toString().trim()).append("</p>\n");
+            currentParagraph.setLength(0);
+        }
+    }
+    
+    /**
+     * 释放处理器资源
+     */
+    public void dispose() {
+        System.out.println("🗑️ 释放MarkdownProcessor资源");
+        
+        try {
+            // 标记为已释放
+            disposed = true;
+            
+            // 清空主题设置
+            currentTheme = null;
+            
+            // 注意：parser和flavour是final的，让GC自动回收
+            
+            System.out.println("✅ MarkdownProcessor资源释放完成");
+            
+        } catch (Exception e) {
+            System.err.println("❌ 释放MarkdownProcessor资源时出错: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 }
