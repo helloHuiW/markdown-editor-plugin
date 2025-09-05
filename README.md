@@ -49,8 +49,8 @@
 
 ## 📸 功能截图
 
-![编辑器界面](src/main/resources/images/screenshot1.png){width = 50%} 
-![预览界面](src/main/resources/images/screenshot2.png){width = 50%}
+![编辑器界面](src/main/resources/images/screenshot1.png)
+![预览界面](src/main/resources/images/screenshot2.png)
 
 
 ## 🚀 安装指南
