@@ -1,11 +1,12 @@
 <idea-plugin>
     <id>com.markdown.editor.plugin</id>
-    <name>Markdown Editor</name>
+    <name>mini-Markdown-Editor</name>
 
     <vendor email="327398329@qq.com">wanghui</vendor>
 
-
-    <description><![CDATA[
+    <description>
+    A comprehensive markdown editor with preview functionality
+    <![CDATA[
     <h3>Markdown Editor - 强大的Markdown编辑和预览插件</h3>
     <p>这是一个功能丰富的Markdown编辑器插件，为IntelliJ IDEA提供了完整的文本编辑和Markdown处理功能。</p>
     
