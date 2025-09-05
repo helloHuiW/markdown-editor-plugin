@@ -302,10 +302,6 @@ limitations under the License.
 
 **请作者喝杯瑞幸☕**
 
-<div align="center">
+![微信](src/main/resources/images/weixin.png)
+![支付宝](src/main/resources/images/zhifubao.png)
 
-![微信](src/main/resources/images/weixin.png) ![支付宝](src/main/resources/images/zhifubao.png)
-
-*扫码支持开发者*
-
-</div>
