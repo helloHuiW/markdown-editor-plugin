@@ -1,6 +1,6 @@
 <idea-plugin>
     <id>com.markdown.editor.plugin</id>
-    <name>mini-Markdown-Editor</name>
+    <name>mini-markdown</name>
 
     <vendor email="327398329@qq.com">wanghui</vendor>
 
