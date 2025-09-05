@@ -12,12 +12,27 @@ import java.util.Stack;
  * 负责将Markdown文本转换为HTML
  */
 public class MarkdownProcessor {
-    private String currentTheme = "暗黑";
     private final MarkdownParser parser;
     private final GFMFlavourDescriptor flavour;
     
     // 添加内存管理标记
     private volatile boolean disposed = false;
+    
+    // 代码块折叠状态管理
+    private final java.util.Map<String, Boolean> codeBlockFoldStates = new java.util.concurrent.ConcurrentHashMap<>();
+    
+    
+    // 性能优化：预编译正则表达式
+    private static final java.util.regex.Pattern INLINE_CODE_PATTERN = java.util.regex.Pattern.compile("`([^`]*)`");
+    private static final java.util.regex.Pattern BOLD_PATTERN = java.util.regex.Pattern.compile("\\*\\*([^*]+)\\*\\*");
+    private static final java.util.regex.Pattern ITALIC_PATTERN = java.util.regex.Pattern.compile("\\*([^*]+)\\*");
+    private static final java.util.regex.Pattern LINK_PATTERN = java.util.regex.Pattern.compile("\\[([^\\]]+)\\]\\(([^\\)]+)\\)");
+    
+    // 性能优化：常用字符串常量
+    private static final String COMMENT_STYLE = "color: #6A9955; font-style: italic;";
+    private static final String STRING_STYLE = "color: #CE9178;";
+    private static final String KEYWORD_STYLE = "color: #569CD6; font-weight: bold;";
+    private static final String NUMBER_STYLE = "color: #B5CEA8;";
     
     public MarkdownProcessor() {
         this.flavour = new GFMFlavourDescriptor();
@@ -41,38 +56,42 @@ public class MarkdownProcessor {
         }
         
         try {
+            
             // 使用简化的HTML生成，避免复杂CSS
             String basicHtml = convertToSimpleHtml(markdownText);
-            return "<html><body>" + basicHtml + "</body></html>";
+            String result = "<html><body>" + basicHtml + "</body></html>";
+            
+            return result;
             
         } catch (Exception e) {
             return "<html><body><p style='color: red;'>解析错误: " + e.getMessage() + "</p></body></html>";
         }
     }
     
-    /**
-     * 设置预览主题
-     */
-    public void setTheme(String theme) {
-        this.currentTheme = theme;
-    }
     
     /**
      * 转换为简单HTML，只使用基础标签，避免复杂CSS
      */
     private String convertToSimpleHtml(String markdown) {
         StringBuilder html = new StringBuilder();
+        
         String[] lines = markdown.split("\n");
         boolean inCodeBlock = false;
         String codeBlockLanguage = null;
+        String currentCodeBlockId = null; // 当前代码块ID
         Stack<String> listStack = new Stack<>(); // 跟踪嵌套列表类型
         int lastListLevel = -1; // 跟踪列表层级
+        int codeBlockIndex = 0; // 代码块索引，基于文档位置
         
         for (String line : lines) {
-            // 代码块处理
+            // 代码块处理 (支持折叠)
             if (line.startsWith("```")) {
                 if (inCodeBlock) {
-                    html.append("</pre>\n");
+                    html.append("</code></pre>");
+                    if (currentCodeBlockId != null) {
+                        html.append("</div></div>\n");
+                        currentCodeBlockId = null;
+                    }
                     inCodeBlock = false;
                     codeBlockLanguage = null;
                 } else {
@@ -82,17 +101,61 @@ public class MarkdownProcessor {
                         codeBlockLanguage = "text";
                     }
                     
-                    // 开始代码块，添加语言类名
-                    html.append("<pre class=\"language-").append(codeBlockLanguage.toLowerCase()).append("\">");
+                    // 生成一致的代码块ID（基于在文档中的位置）
+                    codeBlockIndex++;
+                    currentCodeBlockId = "codeblock-" + codeBlockIndex;
+                    
+                    // 如果是新代码块，初始化为展开状态
+                    if (!codeBlockFoldStates.containsKey(currentCodeBlockId)) {
+                        codeBlockFoldStates.put(currentCodeBlockId, false); // 默认展开
+                    }
+                    
+                    boolean isCollapsed = codeBlockFoldStates.getOrDefault(currentCodeBlockId, false);
+                    
+                    System.out.println("📝 生成代码块: " + currentCodeBlockId + ", 语言: " + codeBlockLanguage + ", 折叠: " + isCollapsed + ", 文档位置: " + codeBlockIndex);
+                    
+                    // 创建有边框的代码块结构
+                    html.append("<div style=\"border: 1px solid #404040; margin: 6px 0; background: transparent;\">");
+                    html.append("<p style=\"margin: 0; padding: 4px 8px; background: transparent; border-bottom: 1px solid #404040;\">");
+                    html.append("<a href=\"fold://").append(currentCodeBlockId).append("\" style=\"color: #4FC3F7; text-decoration: none; font-weight: bold; background: transparent;\">");
+                    html.append(isCollapsed ? "▶ 展开" : "▼ 折叠");
+                    html.append("</a>");
+                    html.append(" <span style=\"color: #CCCCCC; font-size: 10px; background: transparent;\">").append(codeBlockLanguage.toUpperCase()).append("</span>");
+                    html.append("</p>");
+                    
+                    // 代码内容容器 - 有内边距但无额外边框
+                    if (!isCollapsed) {
+                        html.append("<pre style=\"color: #D4D4D4; font-family: monospace; font-size: 10px; padding: 8px; margin: 0; border: none; background: transparent;\"><code>");
+                    }
                     inCodeBlock = true;
                 }
                 continue;
             }
             
             if (inCodeBlock) {
-                // 在代码块中应用语法高亮
-                String highlightedCode = applySyntaxHighlighting(line, codeBlockLanguage);
-                html.append(highlightedCode).append("\n");
+                if (line.startsWith("```")) {
+                    // 结束代码块
+                    boolean isCollapsed = codeBlockFoldStates.getOrDefault(currentCodeBlockId, false);
+                    
+                    if (!isCollapsed) {
+                        html.append("</code></pre>");
+                    }
+                    // 关闭代码块容器div
+                    html.append("</div>");
+                    
+                    System.out.println("📝 结束代码块: " + currentCodeBlockId);
+                    inCodeBlock = false;
+                    codeBlockLanguage = null;
+                    currentCodeBlockId = null;
+                } else {
+                    // 代码内容 - 只有在非折叠状态下才添加
+                    boolean isCollapsed = codeBlockFoldStates.getOrDefault(currentCodeBlockId, false);
+                    
+                    if (!isCollapsed) {
+                        String highlightedCode = applySyntaxHighlighting(line, codeBlockLanguage);
+                        html.append(highlightedCode).append("\n");
+                    }
+                }
                 continue;
             }
             
@@ -155,7 +218,12 @@ public class MarkdownProcessor {
         
         // 关闭未闭合的标签
         if (inCodeBlock) {
-            html.append("</pre>\n");
+            html.append("</code></pre>");
+            if (currentCodeBlockId != null) {
+                html.append("</div></div>\n");
+            } else {
+                html.append("\n");
+            }
         }
         closeAllLists(html, listStack);
         
@@ -163,7 +231,7 @@ public class MarkdownProcessor {
     }
     
     /**
-     * 处理行内格式（粗体、斜体、链接等）
+     * 处理行内格式（粗体、斜体、链接等） - 性能优化版本
      */
     private String processInlineFormatting(String text) {
         if (text == null) return "";
@@ -171,19 +239,19 @@ public class MarkdownProcessor {
         // 先进行HTML转义
         text = escapeHtml(text);
         
-        // 然后处理Markdown格式，注意这里需要处理已转义的字符
+        // 使用预编译的正则表达式进行格式化，避免重复编译
         
         // 处理链接 [text](url)
-        text = text.replaceAll("\\[([^\\]]+)\\]\\(([^\\)]+)\\)", "<a href=\"$2\">$1</a>");
+        text = LINK_PATTERN.matcher(text).replaceAll("<a href=\"$2\">$1</a>");
         
         // 处理粗体 **text**
-        text = text.replaceAll("\\*\\*([^*]+)\\*\\*", "<strong>$1</strong>");
+        text = BOLD_PATTERN.matcher(text).replaceAll("<strong>$1</strong>");
         
-        // 处理斜体 *text*
-        text = text.replaceAll("\\*([^*]+)\\*", "<em>$1</em>");
+        // 处理斜体 *text*  
+        text = ITALIC_PATTERN.matcher(text).replaceAll("<em>$1</em>");
         
         // 处理行内代码 `code`
-        text = text.replaceAll("`([^`]+)`", "<code>$1</code>");
+        text = INLINE_CODE_PATTERN.matcher(text).replaceAll("<code>$1</code>");
         
         return text;
     }
@@ -273,37 +341,6 @@ public class MarkdownProcessor {
         }
     }
     
-    /**
-     * 应用语法高亮 (修复重复标签问题)
-     */
-    private String applySyntaxHighlighting(String line, String language) {
-        if (line == null || line.trim().isEmpty()) {
-            return escapeHtml(line);
-        }
-        
-        // 根据语言类型应用不同的高亮规则 (在转义前处理，避免标签冲突)
-        switch (language.toLowerCase()) {
-            case "java":
-                return highlightJavaSimple(line);
-            case "javascript":
-            case "js":
-                return highlightJavaScriptSimple(line);
-            case "python":
-            case "py":
-                return highlightPythonSimple(line);
-            case "html":
-            case "xml":
-                return highlightHtmlSimple(line);
-            case "css":
-                return highlightCssSimple(line);
-            case "json":
-                return highlightJsonSimple(line);
-            case "sql":
-                return highlightSqlSimple(line);
-            default:
-                return escapeHtml(line); // 无高亮，直接返回转义后的文本
-        }
-    }
     
     /**
      * 简化的Java语法高亮 (直接方式，避免临时标记)
@@ -318,33 +355,33 @@ public class MarkdownProcessor {
         
         // 直接进行替换，按优先级顺序
         
-        // 1. 处理行注释 (优先级最高)
+        // 1. 处理行注释 (优先级最高) - 使用预编译模式和字符串常量
         if (line.contains("//")) {
             int commentIndex = line.indexOf("//");
             String beforeComment = line.substring(0, commentIndex);
             String comment = line.substring(commentIndex);
-            return processJavaCode(beforeComment) + "<span class=\"comment\">" + comment + "</span>";
+            return processJavaCode(beforeComment) + "<span style=\"" + COMMENT_STYLE + "\">" + comment + "</span>";
         }
         
-        // 2. 处理多行注释
-        line = line.replaceAll("/\\*([^*]*)\\*/", "<span class=\"comment\">/*$1*/</span>");
+        // 2. 处理多行注释 - 使用字符串常量
+        line = line.replaceAll("/\\*([^*]*)\\*/", "<span style=\"" + COMMENT_STYLE + "\">/*$1*/</span>");
         
-        // 3. 处理字符串 (在关键字之前)
-        line = line.replaceAll("\"([^\"]*)\"", "<span class=\"string\">\"$1\"</span>");
-        line = line.replaceAll("'([^']*)'", "<span class=\"string\">'$1'</span>");
+        // 3. 处理字符串 (在关键字之前) - 使用字符串常量
+        line = line.replaceAll("\"([^\"]*)\"", "<span style=\"" + STRING_STYLE + "\">\"$1\"</span>");
+        line = line.replaceAll("'([^']*)'", "<span style=\"" + STRING_STYLE + "\">'$1'</span>");
         
         // 4. 处理剩余的代码部分
         return processJavaCode(line);
     }
     
     /**
-     * 处理Java代码的关键字和数字高亮
+     * 处理Java代码的关键字和数字高亮 (性能优化版本)
      */
     private String processJavaCode(String line) {
-        // 处理数字
-        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span class=\"number\">$1</span>");
+        // 处理数字 - 使用字符串常量
+        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span style=\"" + NUMBER_STYLE + "\">$1</span>");
         
-        // 处理关键字
+        // 处理关键字 - 使用字符串常量，避免重复字符串拼接
         String[] javaKeywords = {"public", "private", "protected", "static", "final", "abstract", 
                                 "class", "interface", "extends", "implements", "import", "package",
                                 "if", "else", "for", "while", "do", "switch", "case", "default",
@@ -352,9 +389,13 @@ public class MarkdownProcessor {
                                 "new", "this", "super", "null", "true", "false", "void", "int", "String",
                                 "boolean", "double", "float", "long", "char", "byte", "short"};
         
+        // 预构建样式字符串以避免重复拼接
+        String keywordPrefix = "<span style=\"" + KEYWORD_STYLE + "\">";
+        String keywordSuffix = "</span>";
+        
         for (String keyword : javaKeywords) {
             // 只替换完整的单词，避免替换HTML标签中的内容
-            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*>)", "<span class=\"keyword\">" + keyword + "</span>");
+            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*>)", keywordPrefix + keyword + keywordSuffix);
         }
         
         return line;
@@ -370,40 +411,40 @@ public class MarkdownProcessor {
         
         line = escapeHtml(line);
         
-        // 处理行注释
+        // 处理行注释 - 使用内联样式
         if (line.contains("//")) {
             int commentIndex = line.indexOf("//");
             String beforeComment = line.substring(0, commentIndex);
             String comment = line.substring(commentIndex);
-            return processJSCode(beforeComment) + "<span class=\"comment\">" + comment + "</span>";
+            return processJSCode(beforeComment) + "<span style=\"color: #6A9955; font-style: italic;\">" + comment + "</span>";
         }
         
-        // 处理多行注释
-        line = line.replaceAll("/\\*([^*]*)\\*/", "<span class=\"comment\">/*$1*/</span>");
+        // 处理多行注释 - 使用内联样式
+        line = line.replaceAll("/\\*([^*]*)\\*/", "<span style=\"color: #6A9955; font-style: italic;\">/*$1*/</span>");
         
-        // 处理字符串
-        line = line.replaceAll("\"([^\"]*)\"", "<span class=\"string\">\"$1\"</span>");
-        line = line.replaceAll("'([^']*)'", "<span class=\"string\">'$1'</span>");
-        line = line.replaceAll("`([^`]*)`", "<span class=\"string\">`$1`</span>"); // 模板字符串
+        // 处理字符串 - 使用内联样式
+        line = line.replaceAll("\"([^\"]*)\"", "<span style=\"color: #CE9178;\">\"$1\"</span>");
+        line = line.replaceAll("'([^']*)'", "<span style=\"color: #CE9178;\">'$1'</span>");
+        line = line.replaceAll("`([^`]*)`", "<span style=\"color: #CE9178;\">`$1`</span>"); // 模板字符串
         
         return processJSCode(line);
     }
     
     /**
-     * 处理JavaScript代码的关键字和数字高亮
+     * 处理JavaScript代码的关键字和数字高亮 (使用内联样式)
      */
     private String processJSCode(String line) {
-        // 处理数字
-        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span class=\"number\">$1</span>");
+        // 处理数字 - 使用内联样式
+        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span style=\"color: #B5CEA8;\">$1</span>");
         
-        // 处理关键字
+        // 处理关键字 - 使用内联样式
         String[] jsKeywords = {"function", "var", "let", "const", "if", "else", "for", "while", 
                               "do", "switch", "case", "default", "break", "continue", "return",
                               "try", "catch", "finally", "throw", "new", "this", "typeof", "instanceof",
                               "true", "false", "null", "undefined", "class", "extends"};
         
         for (String keyword : jsKeywords) {
-            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*>)", "<span class=\"keyword\">" + keyword + "</span>");
+            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*>)", "<span style=\"color: #569CD6; font-weight: bold;\">" + keyword + "</span>");
         }
         
         return line;
@@ -419,116 +460,116 @@ public class MarkdownProcessor {
         
         line = escapeHtml(line);
         
-        // 处理Python注释
+        // 处理Python注释 - 使用内联样式
         if (line.contains("#")) {
             int commentIndex = line.indexOf("#");
             String beforeComment = line.substring(0, commentIndex);
             String comment = line.substring(commentIndex);
-            return processPythonCode(beforeComment) + "<span class=\"comment\">" + comment + "</span>";
+            return processPythonCode(beforeComment) + "<span style=\"color: #6A9955; font-style: italic;\">" + comment + "</span>";
         }
         
-        // 处理字符串
-        line = line.replaceAll("\"([^\"]*)\"", "<span class=\"string\">\"$1\"</span>");
-        line = line.replaceAll("'([^']*)'", "<span class=\"string\">'$1'</span>");
+        // 处理字符串 - 使用内联样式
+        line = line.replaceAll("\"([^\"]*)\"", "<span style=\"color: #CE9178;\">\"$1\"</span>");
+        line = line.replaceAll("'([^']*)'", "<span style=\"color: #CE9178;\">'$1'</span>");
         
         return processPythonCode(line);
     }
     
     /**
-     * 处理Python代码的关键字和数字高亮
+     * 处理Python代码的关键字和数字高亮 (使用内联样式)
      */
     private String processPythonCode(String line) {
-        // 处理数字
-        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span class=\"number\">$1</span>");
+        // 处理数字 - 使用内联样式
+        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span style=\"color: #B5CEA8;\">$1</span>");
         
-        // 处理关键字
+        // 处理关键字 - 使用内联样式
         String[] pythonKeywords = {"def", "class", "if", "elif", "else", "for", "while", "break", 
                                   "continue", "return", "try", "except", "finally", "raise",
                                   "import", "from", "as", "with", "pass", "lambda", "yield",
                                   "True", "False", "None", "and", "or", "not", "in", "is"};
         
         for (String keyword : pythonKeywords) {
-            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*>)", "<span class=\"keyword\">" + keyword + "</span>");
+            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*>)", "<span style=\"color: #569CD6; font-weight: bold;\">" + keyword + "</span>");
         }
         
         return line;
     }
     
     /**
-     * 简化的HTML语法高亮
+     * 简化的HTML语法高亮 (使用内联样式)
      */
     private String highlightHtmlSimple(String line) {
         line = escapeHtml(line);
         
-        // HTML标签 (已转义的)
+        // HTML标签 (已转义的) - 使用内联样式
         line = line.replaceAll("&lt;(/?)([a-zA-Z][a-zA-Z0-9]*)(.*?)&gt;", 
-                              "<span class=\"keyword\">&lt;$1$2</span><span class=\"variable\">$3</span><span class=\"keyword\">&gt;</span>");
+                              "<span style=\"color: #569CD6; font-weight: bold;\">&lt;$1$2</span><span style=\"color: #9CDCFE;\">$3</span><span style=\"color: #569CD6; font-weight: bold;\">&gt;</span>");
         
-        // HTML属性
+        // HTML属性 - 使用内联样式
         line = line.replaceAll("([a-zA-Z-]+)=&quot;([^&]*)&quot;", 
-                              "<span class=\"function\">$1</span>=<span class=\"string\">&quot;$2&quot;</span>");
+                              "<span style=\"color: #DCDCAA;\">$1</span>=<span style=\"color: #CE9178;\">&quot;$2&quot;</span>");
         
         return line;
     }
     
     /**
-     * 简化的CSS语法高亮
+     * 简化的CSS语法高亮 (使用内联样式)
      */
     private String highlightCssSimple(String line) {
         line = escapeHtml(line);
         
-        // CSS选择器
-        line = line.replaceAll("^([.#]?[a-zA-Z][a-zA-Z0-9_-]*)", "<span class=\"type\">$1</span>");
+        // CSS选择器 - 使用内联样式
+        line = line.replaceAll("^([.#]?[a-zA-Z][a-zA-Z0-9_-]*)", "<span style=\"color: #4EC9B0;\">$1</span>");
         
-        // CSS属性
-        line = line.replaceAll("([a-zA-Z-]+):", "<span class=\"function\">$1</span>:");
+        // CSS属性 - 使用内联样式
+        line = line.replaceAll("([a-zA-Z-]+):", "<span style=\"color: #DCDCAA;\">$1</span>:");
         
-        // CSS值
-        line = line.replaceAll(":([^;]+);", ": <span class=\"string\">$1</span>;");
+        // CSS值 - 使用内联样式
+        line = line.replaceAll(":([^;]+);", ": <span style=\"color: #CE9178;\">$1</span>;");
         
         return line;
     }
     
     /**
-     * 简化的JSON语法高亮
+     * 简化的JSON语法高亮 (使用内联样式)
      */
     private String highlightJsonSimple(String line) {
         line = escapeHtml(line);
         
-        // JSON键
-        line = line.replaceAll("&quot;([^&]+?)&quot;:", "<span class=\"function\">&quot;$1&quot;</span>:");
+        // JSON键 - 使用内联样式
+        line = line.replaceAll("&quot;([^&]+?)&quot;:", "<span style=\"color: #DCDCAA;\">&quot;$1&quot;</span>:");
         
-        // JSON字符串值
-        line = line.replaceAll(":&quot;([^&]*)&quot;", ": <span class=\"string\">&quot;$1&quot;</span>");
+        // JSON字符串值 - 使用内联样式
+        line = line.replaceAll(":&quot;([^&]*)&quot;", ": <span style=\"color: #CE9178;\">&quot;$1&quot;</span>");
         
-        // JSON数字、布尔值、null
-        line = line.replaceAll("\\b(true|false|null)\\b", "<span class=\"keyword\">$1</span>");
-        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span class=\"number\">$1</span>");
+        // JSON数字、布尔值、null - 使用内联样式
+        line = line.replaceAll("\\b(true|false|null)\\b", "<span style=\"color: #569CD6; font-weight: bold;\">$1</span>");
+        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span style=\"color: #B5CEA8;\">$1</span>");
         
         return line;
     }
     
     /**
-     * 简化的SQL语法高亮
+     * 简化的SQL语法高亮 (使用内联样式)
      */
     private String highlightSqlSimple(String line) {
         line = escapeHtml(line);
         
-        // 处理字符串
-        line = line.replaceAll("'([^']*)'", "<span class=\"string\">'$1'</span>");
+        // 处理字符串 - 使用内联样式
+        line = line.replaceAll("'([^']*)'", "<span style=\"color: #CE9178;\">'$1'</span>");
         
-        // 处理数字
-        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span class=\"number\">$1</span>");
+        // 处理数字 - 使用内联样式
+        line = line.replaceAll("\\b(\\d+\\.?\\d*)\\b", "<span style=\"color: #B5CEA8;\">$1</span>");
         
-        // 处理关键字
+        // 处理关键字 - 使用内联样式
         String[] sqlKeywords = {"SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE", "CREATE", 
                                "TABLE", "INDEX", "DROP", "ALTER", "JOIN", "INNER", "LEFT", "RIGHT",
                                "ON", "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "OFFSET", "UNION",
                                "AND", "OR", "NOT", "NULL", "TRUE", "FALSE", "AS", "DISTINCT"};
         
         for (String keyword : sqlKeywords) {
-            line = line.replaceAll("\\b" + keyword.toLowerCase() + "\\b(?![^<]*>)", "<span class=\"keyword\">" + keyword.toLowerCase() + "</span>");
-            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*>)", "<span class=\"keyword\">" + keyword + "</span>");
+            line = line.replaceAll("\\b" + keyword.toLowerCase() + "\\b(?![^<]*>)", "<span style=\"color: #569CD6; font-weight: bold;\">" + keyword.toLowerCase() + "</span>");
+            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*>)", "<span style=\"color: #569CD6; font-weight: bold;\">" + keyword + "</span>");
         }
         
         return line;
@@ -538,7 +579,7 @@ public class MarkdownProcessor {
      * 包装HTML文档
      */
     private String wrapHtmlDocument(String bodyContent) {
-        String css = getCssForTheme(currentTheme);
+        String css = getDarkThemeCss();
         
         return String.format(
             "<!DOCTYPE html>" +
@@ -563,10 +604,6 @@ public class MarkdownProcessor {
     /**
      * 获取主题CSS
      */
-    private String getCssForTheme(String theme) {
-        // 只使用暗黑主题
-                return getDarkThemeCss();
-    }
     
     
     private String getDarkThemeCss() {
@@ -1071,7 +1108,7 @@ public class MarkdownProcessor {
         StringBuilder result = new StringBuilder();
         
         for (String line : lines) {
-            String highlightedLine = applySyntaxHighlighting(line, language, currentTheme);
+            String highlightedLine = applySyntaxHighlighting(line, language);
             result.append(highlightedLine);
             if (lines.length > 1) {
                 result.append("\n");
@@ -1084,7 +1121,7 @@ public class MarkdownProcessor {
     /**
      * 为单行代码应用语法高亮
      */
-    private String applySyntaxHighlighting(String line, String language, String theme) {
+    private String applySyntaxHighlighting(String line, String language) {
         if (line == null) {
             return "";
         }
@@ -1112,26 +1149,88 @@ public class MarkdownProcessor {
             }
         }
         
-        // 处理剩余内容
+        // 处理剩余内容 - 先不转义，等语法高亮完成后再处理
         String remaining = line.substring(i);
-        
-        // HTML转义剩余内容
-        remaining = remaining.replace("&", "&amp;")
-                   .replace("<", "&lt;")
-                   .replace(">", "&gt;")
-                   .replace("\"", "&quot;")
-                   .replace("'", "&#39;");
-        
         processedLine.append(remaining);
         
-        // 根据语言应用语法高亮
-        return highlightByLanguage(processedLine.toString(), language, theme);
+        // 先应用语法高亮（此时还是原始文本）
+        String highlighted = highlightByLanguage(processedLine.toString(), language);
+        
+        // 最后对非HTML标签部分进行HTML转义
+        return finalEscapeHtml(highlighted);
+    }
+    
+    /**
+     * 智能HTML转义：只转义非HTML标签部分的特殊字符
+     */
+    private String finalEscapeHtml(String highlighted) {
+        if (highlighted == null) {
+            return "";
+        }
+        
+        StringBuilder result = new StringBuilder();
+        int i = 0;
+        
+        while (i < highlighted.length()) {
+            // 检查是否是HTML标签开始
+            if (highlighted.charAt(i) == '<') {
+                int tagEnd = highlighted.indexOf('>', i);
+                if (tagEnd != -1) {
+                    // 这是一个完整的HTML标签，直接保留
+                    result.append(highlighted.substring(i, tagEnd + 1));
+                    i = tagEnd + 1;
+                } else {
+                    // 不是完整标签，转义这个 <
+                    result.append("&lt;");
+                    i++;
+                }
+            } else if (highlighted.charAt(i) == '&') {
+                // 检查是否已经是转义序列
+                int semicolon = highlighted.indexOf(';', i);
+                if (semicolon != -1 && semicolon - i <= 8) { // 常见转义序列长度不超过8
+                    String sequence = highlighted.substring(i, semicolon + 1);
+                    if (sequence.matches("&(nbsp|amp|lt|gt|quot|#39|#x[0-9a-fA-F]+|#\\d+);")) {
+                        // 已经是转义序列，保留
+                        result.append(sequence);
+                        i = semicolon + 1;
+                    } else {
+                        // 普通的&符号，转义
+                        result.append("&amp;");
+                        i++;
+                    }
+                } else {
+                    // 普通的&符号，转义
+                    result.append("&amp;");
+                    i++;
+                }
+            } else {
+                // 其他字符检查是否需要转义
+                char c = highlighted.charAt(i);
+                switch (c) {
+                    case '>':
+                        result.append("&gt;");
+                        break;
+                    case '"':
+                        result.append("&quot;");
+                        break;
+                    case '\'':
+                        result.append("&#39;");
+                        break;
+                    default:
+                        result.append(c);
+                        break;
+                }
+                i++;
+            }
+        }
+        
+        return result.toString();
     }
     
     /**
      * 根据语言应用语法高亮
      */
-    private String highlightByLanguage(String line, String language, String theme) {
+    private String highlightByLanguage(String line, String language) {
         if (language == null) language = "";
         
         // 始终使用暗黑主题
@@ -1167,22 +1266,42 @@ public class MarkdownProcessor {
                            "if", "else", "for", "while", "do", "switch", "case", "break", "continue", "return",
                            "new", "this", "super", "try", "catch", "finally", "throw", "throws"};
         
-        String keywordColor = isDark ? "#ff7b72" : "#cf222e";  // 红色 - GitHub主题使用更鲜明的红色
-        String stringColor = isDark ? "#a5d6ff" : "#0a3069";   // 蓝色 - GitHub主题使用更深的蓝色确保对比度
-        String commentColor = isDark ? "#8b949e" : "#6a737d";  // 灰色 - 保持原色
+        String keywordColor = isDark ? "#ff7b72" : "#cf222e";  // 红色
+        String stringColor = isDark ? "#a5d6ff" : "#0a3069";   // 蓝色
+        String commentColor = isDark ? "#8b949e" : "#6a737d";  // 灰色
         
-        for (String keyword : keywords) {
-            line = line.replaceAll("\\b" + keyword + "\\b", 
-                "<span style='color: " + keywordColor + "; font-weight: bold;'>" + keyword + "</span>");
+        // 处理注释（优先级最高，避免在注释中进行其他高亮）
+        if (line.contains("//")) {
+            int commentIndex = line.indexOf("//");
+            String beforeComment = line.substring(0, commentIndex);
+            String comment = line.substring(commentIndex);
+            
+            // 对注释前的部分进行高亮处理
+            beforeComment = highlightJavaKeywordsAndStrings(beforeComment, keywords, keywordColor, stringColor);
+            
+            // 注释部分单独处理
+            comment = "<span style=\"color: " + commentColor + "; font-style: italic; background: transparent;\">" + comment + "</span>";
+            
+            return beforeComment + comment;
+        } else {
+            // 没有注释，正常处理
+            return highlightJavaKeywordsAndStrings(line, keywords, keywordColor, stringColor);
         }
-        
-        // 字符串高亮
+    }
+    
+    /**
+     * 高亮Java关键字和字符串
+     */
+    private String highlightJavaKeywordsAndStrings(String line, String[] keywords, String keywordColor, String stringColor) {
+        // 先处理字符串（避免在字符串中高亮关键字）
         line = line.replaceAll("\"([^\"]*?)\"", 
-            "<span style='color: " + stringColor + ";'>\"$1\"</span>");
+            "<span style=\"color: " + stringColor + "; background: transparent;\">\"$1\"</span>");
         
-        // 注释高亮
-        line = line.replaceAll("//(.+)$", 
-            "<span style='color: " + commentColor + "; font-style: italic;'>//$1</span>");
+        // 然后处理关键字（避免在已高亮的内容中再次高亮）
+        for (String keyword : keywords) {
+            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*</span>)", 
+                "<span style=\"color: " + keywordColor + "; font-weight: bold; background: transparent;\">" + keyword + "</span>");
+        }
         
         return line;
     }
@@ -1197,16 +1316,17 @@ public class MarkdownProcessor {
         String keywordColor = isDark ? "#ff7b72" : "#cf222e";
         String stringColor = isDark ? "#a5d6ff" : "#0a3069";
         
-        for (String keyword : keywords) {
-            line = line.replaceAll("\\b" + keyword + "\\b", 
-                "<span style='color: " + keywordColor + "; font-weight: bold;'>" + keyword + "</span>");
-        }
-        
-        // 字符串高亮
+        // 先处理字符串（避免在字符串中高亮关键字）
         line = line.replaceAll("\"([^\"]*?)\"", 
-            "<span style='color: " + stringColor + ";'>\"$1\"</span>");
+            "<span style=\"color: " + stringColor + "; background: transparent;\">\"$1\"</span>");
         line = line.replaceAll("'([^']*?)'", 
-            "<span style='color: " + stringColor + ";'>'$1'</span>");
+            "<span style=\"color: " + stringColor + "; background: transparent;\">'$1'</span>");
+        
+        // 然后处理关键字（避免在已高亮的内容中再次高亮）
+        for (String keyword : keywords) {
+            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*</span>)", 
+                "<span style=\"color: " + keywordColor + "; font-weight: bold; background: transparent;\">" + keyword + "</span>");
+        }
         
         return line;
     }
@@ -1223,20 +1343,40 @@ public class MarkdownProcessor {
         String stringColor = isDark ? "#a5d6ff" : "#0a3069";
         String commentColor = isDark ? "#8b949e" : "#6a737d";
         
-        for (String keyword : keywords) {
-            line = line.replaceAll("\\b" + keyword + "\\b", 
-                "<span style='color: " + keywordColor + "; font-weight: bold;'>" + keyword + "</span>");
+        // 处理注释（优先级最高）
+        if (line.contains("#")) {
+            int commentIndex = line.indexOf("#");
+            String beforeComment = line.substring(0, commentIndex);
+            String comment = line.substring(commentIndex);
+            
+            // 对注释前的部分进行高亮处理
+            beforeComment = highlightPythonKeywordsAndStrings(beforeComment, keywords, keywordColor, stringColor);
+            
+            // 注释部分单独处理
+            comment = "<span style=\"color: " + commentColor + "; font-style: italic; background: transparent;\">" + comment + "</span>";
+            
+            return beforeComment + comment;
+        } else {
+            // 没有注释，正常处理
+            return highlightPythonKeywordsAndStrings(line, keywords, keywordColor, stringColor);
         }
-        
-        // 字符串高亮
+    }
+    
+    /**
+     * 高亮Python关键字和字符串
+     */
+    private String highlightPythonKeywordsAndStrings(String line, String[] keywords, String keywordColor, String stringColor) {
+        // 先处理字符串（避免在字符串中高亮关键字）
         line = line.replaceAll("\"([^\"]*?)\"", 
-            "<span style='color: " + stringColor + ";'>\"$1\"</span>");
+            "<span style=\"color: " + stringColor + "; background: transparent;\">\"$1\"</span>");
         line = line.replaceAll("'([^']*?)'", 
-            "<span style='color: " + stringColor + ";'>'$1'</span>");
+            "<span style=\"color: " + stringColor + "; background: transparent;\">'$1'</span>");
         
-        // 注释高亮
-        line = line.replaceAll("#(.+)$", 
-            "<span style='color: " + commentColor + "; font-style: italic;'>#$1</span>");
+        // 然后处理关键字（避免在已高亮的内容中再次高亮）
+        for (String keyword : keywords) {
+            line = line.replaceAll("\\b" + keyword + "\\b(?![^<]*</span>)", 
+                "<span style=\"color: " + keywordColor + "; font-weight: bold; background: transparent;\">" + keyword + "</span>");
+        }
         
         return line;
     }
@@ -1249,7 +1389,7 @@ public class MarkdownProcessor {
         
         // HTML标签高亮
         line = line.replaceAll("&lt;([^&gt;]+)&gt;", 
-            "<span style='color: " + tagColor + "; font-weight: bold;'>&lt;$1&gt;</span>");
+            "<span style=\"color: " + tagColor + "; font-weight: bold; background: transparent;\">&lt;$1&gt;</span>");
         
         return line;
     }
@@ -1262,7 +1402,7 @@ public class MarkdownProcessor {
         
         // CSS属性高亮
         line = line.replaceAll("([a-zA-Z-]+):", 
-            "<span style='color: " + propertyColor + ";'>$1</span>:");
+            "<span style=\"color: " + propertyColor + "; background: transparent;\">$1</span>:");
         
         return line;
     }
@@ -1276,9 +1416,9 @@ public class MarkdownProcessor {
         
         // JSON字符串高亮
         line = line.replaceAll("\"([^\"]*?)\":", 
-            "<span style='color: " + keyColor + "; font-weight: bold;'>\"$1\"</span>:");
+            "<span style=\"color: " + keyColor + "; font-weight: bold; background: transparent;\">\"$1\"</span>:");
         line = line.replaceAll(":&nbsp;\"([^\"]*?)\"", 
-            ": <span style='color: " + valueColor + ";'>\"$1\"</span>");
+            ": <span style=\"color: " + valueColor + "; background: transparent;\">\"$1\"</span>");
         
         return line;
     }
@@ -1292,13 +1432,13 @@ public class MarkdownProcessor {
         
         // 字符串高亮
         line = line.replaceAll("\"([^\"]*?)\"", 
-            "<span style='color: " + stringColor + ";'>\"$1\"</span>");
+            "<span style=\"color: " + stringColor + "; background: transparent;\">\"$1\"</span>");
         line = line.replaceAll("'([^']*?)'", 
-            "<span style='color: " + stringColor + ";'>'$1'</span>");
+            "<span style=\"color: " + stringColor + "; background: transparent;\">'$1'</span>");
         
         // 数字高亮
         line = line.replaceAll("\\b(\\d+)\\b", 
-            "<span style='color: " + numberColor + ";'>$1</span>");
+            "<span style=\"color: " + numberColor + "; background: transparent;\">$1</span>");
         
         return line;
     }
@@ -1398,7 +1538,60 @@ public class MarkdownProcessor {
     }
     
     /**
-     * 释放处理器资源
+     * 切换代码块折叠状态
+     * @param codeBlockId 代码块ID
+     * @return 切换后的状态 (true=折叠, false=展开)
+     */
+    public boolean toggleCodeBlockFold(String codeBlockId) {
+        boolean currentState = codeBlockFoldStates.getOrDefault(codeBlockId, false);
+        boolean newState = !currentState;
+        codeBlockFoldStates.put(codeBlockId, newState);
+        System.out.println("🔀 代码块 " + codeBlockId + " 折叠状态: " + (newState ? "折叠" : "展开"));
+        return newState;
+    }
+    
+    /**
+     * 重置所有代码块状态
+     */
+    public void resetCodeBlockStates() {
+        // 不需要重置计数器，因为现在基于文档位置
+        // 保留用户的折叠偏好，不清空codeBlockFoldStates
+        System.out.println("🔄 代码块状态重置（保留折叠偏好）");
+    }
+    
+    /**
+     * 获取代码块折叠状态
+     * @param codeBlockId 代码块ID
+     * @return 折叠状态 (true=折叠, false=展开)
+     */
+    public boolean isCodeBlockFolded(String codeBlockId) {
+        return codeBlockFoldStates.getOrDefault(codeBlockId, false);
+    }
+    
+    /**
+     * 测试方法：输出生成的HTML用于调试
+     */
+    public void debugGeneratedHtml(String markdownText) {
+        System.out.println("🔍 调试HTML生成 - 输入Markdown:");
+        System.out.println("=====================================");
+        System.out.println(markdownText);
+        System.out.println("=====================================");
+        
+        String html = processMarkdown(markdownText);
+        
+        System.out.println("🔍 生成的HTML:");
+        System.out.println("=====================================");
+        System.out.println(html);
+        System.out.println("=====================================");
+        
+        System.out.println("🔍 代码块折叠状态:");
+        codeBlockFoldStates.forEach((id, state) -> 
+            System.out.println("  " + id + ": " + (state ? "折叠" : "展开"))
+        );
+    }
+    
+    /**
+     * 释放处理器资源 (性能优化版本)
      */
     public void dispose() {
         System.out.println("🗑️ 释放MarkdownProcessor资源");
@@ -1408,7 +1601,9 @@ public class MarkdownProcessor {
             disposed = true;
             
             // 清空主题设置
-            currentTheme = null;
+            
+            // 清空代码块状态
+            codeBlockFoldStates.clear();
             
             // 注意：parser和flavour是final的，让GC自动回收
             

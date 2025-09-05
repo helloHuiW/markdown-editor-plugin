@@ -107,21 +107,6 @@ public class MarkdownEditorDialog extends DialogWrapper {
         saveAsButton.addActionListener(e -> saveAsFile());
         toolBar.add(saveAsButton);
         
-        toolBar.addSeparator();
-        
-        // 主题选择
-        JComboBox<String> themeCombo = new JComboBox<>(new String[]{"GitHub", "暗黑", "简洁"});
-        themeCombo.addActionListener(e -> {
-            String selectedTheme = (String) themeCombo.getSelectedItem();
-            if (previewPanel != null) {
-                ApplicationManager.getApplication().executeOnPooledThread(() -> {
-                    previewPanel.setTheme(selectedTheme);
-                    updatePreview();
-                });
-            }
-        });
-        toolBar.add(new JLabel("主题: "));
-        toolBar.add(themeCombo);
         
         return toolBar;
     }

@@ -20,7 +20,6 @@ public final class MarkdownSettings implements PersistentStateComponent<Markdown
     private boolean enableSyntaxHighlight = true;
     private boolean enableCodeFolding = true;
     private boolean enableAutoSave = false;
-    private String defaultTheme = "GitHub";
     private int autoSaveInterval = 30;
     
     public static MarkdownSettings getInstance() {
@@ -71,13 +70,6 @@ public final class MarkdownSettings implements PersistentStateComponent<Markdown
         this.enableAutoSave = enableAutoSave;
     }
 
-    public String getDefaultTheme() {
-        return defaultTheme;
-    }
-
-    public void setDefaultTheme(String defaultTheme) {
-        this.defaultTheme = defaultTheme;
-    }
 
     public int getAutoSaveInterval() {
         return autoSaveInterval;

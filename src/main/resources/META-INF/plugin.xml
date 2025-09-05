@@ -4,6 +4,7 @@
 
     <vendor email="327398329@qq.com">wanghui</vendor>
 
+
     <description><![CDATA[
     <h3>Markdown Editor - 强大的Markdown编辑和预览插件</h3>
     <p>这是一个功能丰富的Markdown编辑器插件，为IntelliJ IDEA提供了完整的文本编辑和Markdown处理功能。</p>
@@ -16,8 +17,7 @@
     <ul>
         <li>🔤 <strong>高级文本编辑器</strong> - 支持语法高亮、代码折叠、智能补全</li>
         <li>📝 <strong>Markdown编辑</strong> - 完整的Markdown语法支持</li>
-        <li>👁️ <strong>实时预览</strong> - 所见即所得的预览功能</li>
-        <li>🎨 <strong>多主题支持</strong> - GitHub、暗黑、简洁三种预览主题</li>
+        <li>👁️ <strong>实时预览</strong> - 所见即所得的预览功能，支持代码块折叠</li>
         <li>📁 <strong>文件操作</strong> - 新建、打开、保存、另存为功能</li>
         <li>🔄 <strong>Tab切换</strong> - 编辑和预览之间轻松切换</li>
         <li>🛠️ <strong>工具栏集成</strong> - 所有功能一键可达</li>
@@ -31,6 +31,9 @@
         <li>在 <strong>"👁️ 预览"</strong> Tab中查看实时效果</li>
         <li>使用工具栏进行文件操作和主题切换</li>
     </ol>
+    
+    <h4>🔗 项目地址：</h4>
+    <p><a href="https://github.com/helloHuiW/markdown-editor-plugin">GitHub 仓库</a> - 欢迎 Star 和贡献代码</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -56,12 +59,6 @@
         <lang.foldingBuilder language="Markdown" 
                              implementationClass="com.markdown.editor.folding.MarkdownFoldingBuilder"/>
         
-        <!-- 预览主题 -->
-        <applicationConfigurable parentId="editor" 
-                                 instance="com.markdown.editor.settings.MarkdownSettingsConfigurable" 
-                                 id="markdown.editor.settings" 
-                                 displayName="Markdown Editor"/>
-        
         <!-- 工具窗口 -->
         <toolWindow id="MarkDown" 
                     secondary="true" 
@@ -77,14 +74,7 @@
         <!-- 主菜单 -->
         <group id="MarkdownEditor.TopLevelMenu" text="Markdown Editor" description="Markdown Editor actions">
             <add-to-group group-id="MainMenu" anchor="before" relative-to-action="HelpMenu"/>
-            
-            <action id="MarkdownEditor.NewMarkdownFile"
-                    class="com.markdown.editor.actions.NewMarkdownFileAction"
-                    text="新建Markdown文件"
-                    description="创建一个新的Markdown文件">
-                <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt M"/>
-            </action>
-            
+        
             <action id="MarkdownEditor.TogglePreview"
                     class="com.markdown.editor.actions.TogglePreviewAction"
                     text="切换预览"
@@ -92,36 +82,13 @@
                 <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift P"/>
             </action>
             
-            <action id="MarkdownEditor.ExportHTML"
-                    class="com.markdown.editor.actions.ExportHTMLAction"
-                    text="导出为HTML"
-                    description="将Markdown文件导出为HTML">
-            </action>
-            
-            <action id="MarkdownEditor.InsertTable"
-                    class="com.markdown.editor.actions.InsertTableAction"
-                    text="插入表格"
-                    description="在当前位置插入Markdown表格">
-                <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt T"/>
-            </action>
         </group>
         
-        
-        <!-- 新建文件菜单 -->
-        <action id="MarkdownEditor.NewFileAction"
-                class="com.markdown.editor.actions.SimpleNewMarkdownFileAction"
-                text="Markdown文件"
-                description="创建一个新的Markdown文件">
-            <add-to-group group-id="NewGroup" anchor="before" relative-to-action="NewFromTemplate"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt M"/>
-        </action>
         
         <!-- 编辑器上下文菜单 -->
         <group id="MarkdownEditor.EditorPopupMenu">
             <reference ref="MarkdownEditor.TogglePreview"/>
-            <reference ref="MarkdownEditor.InsertTable"/>
             <separator/>
-            <reference ref="MarkdownEditor.ExportHTML"/>
             <add-to-group group-id="EditorPopupMenu" anchor="first"/>
         </group>
     </actions>

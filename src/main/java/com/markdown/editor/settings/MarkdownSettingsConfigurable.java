@@ -20,7 +20,6 @@ public class MarkdownSettingsConfigurable implements Configurable {
     private JBCheckBox enableSyntaxHighlightCheckBox;
     private JBCheckBox enableCodeFoldingCheckBox;
     private JBCheckBox enableAutoSaveCheckBox;
-    private JComboBox<String> defaultThemeComboBox;
     private JTextField autoSaveIntervalField;
     
     private final MarkdownSettings settings = MarkdownSettings.getInstance();
@@ -39,7 +38,6 @@ public class MarkdownSettingsConfigurable implements Configurable {
         enableCodeFoldingCheckBox = new JBCheckBox("启用代码折叠");
         enableAutoSaveCheckBox = new JBCheckBox("启用自动保存");
         
-        defaultThemeComboBox = new JComboBox<>(new String[]{"GitHub", "暗黑", "简洁"});
         autoSaveIntervalField = new JTextField(10);
         
         return FormBuilder.createFormBuilder()
@@ -47,9 +45,6 @@ public class MarkdownSettingsConfigurable implements Configurable {
             .addComponent(enablePreviewCheckBox)
             .addComponent(enableSyntaxHighlightCheckBox)
             .addComponent(enableCodeFoldingCheckBox)
-            .addSeparator()
-            .addComponent(new JBLabel("预览设置"))
-            .addLabeledComponent("默认主题:", defaultThemeComboBox)
             .addSeparator()
             .addComponent(new JBLabel("自动保存"))
             .addComponent(enableAutoSaveCheckBox)
@@ -64,7 +59,6 @@ public class MarkdownSettingsConfigurable implements Configurable {
                enableSyntaxHighlightCheckBox.isSelected() != settings.isEnableSyntaxHighlight() ||
                enableCodeFoldingCheckBox.isSelected() != settings.isEnableCodeFolding() ||
                enableAutoSaveCheckBox.isSelected() != settings.isEnableAutoSave() ||
-               !defaultThemeComboBox.getSelectedItem().equals(settings.getDefaultTheme()) ||
                !autoSaveIntervalField.getText().equals(String.valueOf(settings.getAutoSaveInterval()));
     }
 
@@ -75,7 +69,6 @@ public class MarkdownSettingsConfigurable implements Configurable {
             settings.setEnableSyntaxHighlight(enableSyntaxHighlightCheckBox.isSelected());
             settings.setEnableCodeFolding(enableCodeFoldingCheckBox.isSelected());
             settings.setEnableAutoSave(enableAutoSaveCheckBox.isSelected());
-            settings.setDefaultTheme((String) defaultThemeComboBox.getSelectedItem());
             settings.setAutoSaveInterval(Integer.parseInt(autoSaveIntervalField.getText()));
         } catch (NumberFormatException e) {
             throw new ConfigurationException("自动保存间隔必须是一个有效的数字");
@@ -88,7 +81,6 @@ public class MarkdownSettingsConfigurable implements Configurable {
         enableSyntaxHighlightCheckBox.setSelected(settings.isEnableSyntaxHighlight());
         enableCodeFoldingCheckBox.setSelected(settings.isEnableCodeFolding());
         enableAutoSaveCheckBox.setSelected(settings.isEnableAutoSave());
-        defaultThemeComboBox.setSelectedItem(settings.getDefaultTheme());
         autoSaveIntervalField.setText(String.valueOf(settings.getAutoSaveInterval()));
     }
 }

@@ -56,6 +56,11 @@ public class MarkdownPreviewPanel implements Disposable {
             textPane.setBackground(new java.awt.Color(43, 43, 43)); // #2B2B2B
             textPane.setOpaque(true);
             
+            // 设置正常的选择颜色（恢复文本选择功能）
+            textPane.setSelectionColor(new java.awt.Color(51, 153, 255)); // 正常的蓝色选择背景
+            textPane.setSelectedTextColor(new java.awt.Color(255, 255, 255)); // 白色选择文本
+            textPane.setCaretColor(new java.awt.Color(255, 255, 255)); // 白色光标
+            
             // 设置HTML编辑器
             HTMLEditorKit kit = new HTMLEditorKit();
             textPane.setEditorKit(kit);
@@ -97,7 +102,7 @@ public class MarkdownPreviewPanel implements Disposable {
     }
     
     /**
-     * 获取暗黑主题CSS样式 (微调版本：更小字体和列表间距)
+     * 获取JTextPane兼容的CSS样式
      */
     private String getBasicCSS() {
         return "body { font-family: Arial, sans-serif; font-size: 11px; color: #E6E6E6; background-color: #2B2B2B; margin: 0; padding: 8px; }" +
@@ -108,19 +113,10 @@ public class MarkdownPreviewPanel implements Disposable {
                "h5 { font-size: 12px; font-weight: bold; color: #CCCCCC; margin-top: 6px; margin-bottom: 2px; }" +
                "h6 { font-size: 11px; font-weight: bold; color: #CCCCCC; margin-top: 6px; margin-bottom: 2px; }" +
                "p { font-size: 11px; color: #E6E6E6; margin-top: 3px; margin-bottom: 6px; }" +
-               "pre { background-color: #1E1E1E; color: #D4D4D4; font-family: 'Courier New', monospace; font-size: 10px; padding: 10px; margin: 6px 0; border: 1px solid #404040; }" +
-               "code { background-color: #383838; color: #E6E6E6; font-family: 'Courier New', monospace; font-size: 10px; padding: 1px 3px; }" +
-               // 语法高亮颜色
-               ".keyword { color: #569CD6; font-weight: bold; }" +        // 关键字 - 蓝色
-               ".string { color: #CE9178; }" +                             // 字符串 - 橙色
-               ".comment { color: #6A9955; font-style: italic; }" +        // 注释 - 绿色
-               ".number { color: #B5CEA8; }" +                             // 数字 - 浅绿色
-               ".function { color: #DCDCAA; }" +                           // 函数名 - 黄色
-               ".type { color: #4EC9B0; }" +                               // 类型 - 青色
-               ".operator { color: #D4D4D4; }" +                           // 操作符 - 白色
-               ".variable { color: #9CDCFE; }" +                           // 变量 - 浅蓝色
+               "pre { color: #D4D4D4; font-family: monospace; font-size: 10px; padding: 8px 0; margin: 0; border: none; background: transparent; }" +
+               "code { color: #E6E6E6; font-family: monospace; font-size: 10px; padding: 0; background: transparent; }" +
                "blockquote { color: #999999; font-style: italic; border-left: 3px solid #555555; padding-left: 10px; margin: 6px 0; }" +
-               "a { color: #4FC3F7; }" +
+               "a { color: #4FC3F7; text-decoration: underline; }" +
                "strong { font-weight: bold; color: #FFFFFF; }" +
                "em { font-style: italic; color: #E6E6E6; }" +
                "ul { margin: 4px 0; padding-left: 16px; color: #E6E6E6; }" +
@@ -157,7 +153,16 @@ public class MarkdownPreviewPanel implements Disposable {
                             
                             if (url != null && !url.trim().isEmpty()) {
                                 System.out.println("🔗 捕获链接点击: " + url);
-                                openLinkInBrowser(url);
+                                
+                                                // 检查是否是代码块折叠链接
+                if (url.startsWith("fold://")) {
+                    System.out.println("🔗 检测到代码块折叠链接: " + url);
+                    handleCodeBlockFold(url);
+                    return; // 重要：避免继续处理
+                } else {
+                    System.out.println("🔗 检测到普通链接: " + url);
+                    openLinkInBrowser(url);
+                }
                             }
                             
                         } catch (Exception ex) {
@@ -172,6 +177,47 @@ public class MarkdownPreviewPanel implements Disposable {
             
         } catch (Exception e) {
             System.err.println("❌ JTextPane链接处理设置失败: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+    
+    /**
+     * 处理代码块折叠切换
+     */
+    private void handleCodeBlockFold(String foldUrl) {
+        try {
+            // 提取代码块ID
+            String codeBlockId = foldUrl.substring("fold://".length());
+            System.out.println("🔀 处理代码块折叠: " + codeBlockId);
+            
+            // 切换折叠状态
+            boolean newState = processor.toggleCodeBlockFold(codeBlockId);
+            System.out.println("🔀 代码块 " + codeBlockId + " 新状态: " + (newState ? "折叠" : "展开"));
+            
+            // 重新渲染内容以更新折叠状态
+            if (currentMarkdownContent != null) {
+                System.out.println("🔄 重新渲染内容以更新折叠状态");
+                
+                ApplicationManager.getApplication().invokeLater(() -> {
+                    try {
+                        if (textPane != null) {
+                            // 清空当前内容
+                            textPane.setText("");
+                            
+                            // 重新加载内容
+                            loadContentInTextPane(currentMarkdownContent);
+                            
+                            System.out.println("✅ 内容重新渲染完成");
+                        }
+                    } catch (Exception ex) {
+                        System.err.println("❌ 重新渲染失败: " + ex.getMessage());
+                        ex.printStackTrace();
+                    }
+                });
+            }
+            
+        } catch (Exception e) {
+            System.err.println("❌ 代码块折叠处理失败: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -257,8 +303,22 @@ public class MarkdownPreviewPanel implements Disposable {
         try {
             System.out.println("📝 在JTextPane中加载Markdown内容");
             
+            // 调试：输出生成的HTML
+            if (markdownContent.contains("```")) {
+                System.out.println("🔍 检测到代码块，启用调试模式");
+                processor.debugGeneratedHtml(markdownContent);
+            }
+            
             // 使用MarkdownProcessor处理内容
             String html = processor.processMarkdown(markdownContent);
+            
+            // 额外调试：检查HTML中是否包含折叠结构
+            if (html.contains("fold://")) {
+                System.out.println("✅ HTML包含折叠链接");
+                System.out.println("🔍 折叠链接数量: " + (html.split("fold://").length - 1));
+            } else {
+                System.out.println("❌ HTML不包含折叠链接");
+            }
             
             // 确保HTML有基本结构
             if (!html.contains("<html>")) {
@@ -302,40 +362,18 @@ public class MarkdownPreviewPanel implements Disposable {
         return mainPanel;
     }
     
-    /**
-     * 设置主题（兼容性方法）
-     */
-    public void setTheme(String theme) {
-        System.out.println("主题设置为: " + theme + " (JTextPane使用简单样式)");
-        
-        // 根据主题调整背景色
-        if (textPane != null && scrollPane != null) {
-            if ("dark".equalsIgnoreCase(theme)) {
-                textPane.setBackground(new Color(45, 45, 45));
-                scrollPane.getViewport().setBackground(new Color(45, 45, 45));
-                mainPanel.setBackground(new Color(45, 45, 45));
-            } else {
-                textPane.setBackground(Color.WHITE);
-                scrollPane.getViewport().setBackground(Color.WHITE);
-                mainPanel.setBackground(Color.WHITE);
-            }
-        }
-    }
     
     @Override
     public void dispose() {
         System.out.println("🗑️ 释放JTextPane预览面板资源");
         
         try {
-            // 清空内容缓存，释放内存
+            // 清空当前内容缓存
             currentMarkdownContent = null;
             
             // 释放JTextPane资源
             if (textPane != null) {
-                // 清空文本内容
-                textPane.setText("");
-                
-                // 移除所有监听器
+                // 移除所有超链接监听器
                 HyperlinkListener[] listeners = textPane.getHyperlinkListeners();
                 for (HyperlinkListener listener : listeners) {
                     textPane.removeHyperlinkListener(listener);

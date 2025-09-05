@@ -17,6 +17,7 @@ import com.intellij.openapi.fileTypes.FileTypes;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.wm.ToolWindow;
 import com.intellij.openapi.editor.ex.EditorEx;
 import com.intellij.ui.components.JBPanel;
 import com.intellij.ui.components.JBLabel;
@@ -36,7 +37,9 @@ import java.nio.charset.StandardCharsets;
  * Markdown工具窗口
  * 直接在工具窗口内提供编辑和预览功能
  */
-public class MarkdownToolWindow {
+public class MarkdownToolWindow implements com.intellij.openapi.Disposable {
+    
+    
     private final Project project;
     private final JPanel mainPanel;
     private JBTabbedPane tabbedPane;
@@ -47,13 +50,28 @@ public class MarkdownToolWindow {
     private JLabel statusLabel;
     private JLabel filePathLabel;
     private boolean isDocumentModified = false;
+    private ToolWindow toolWindow;
+    
+    // 全局标志位：插件是否正在卸载
+    private static volatile boolean isPluginUnloading = false;
+    
+    // 🚨 全局紧急停止标志 - 用于最紧急的情况
+    private static volatile boolean EMERGENCY_STOP_ALL_SAVES = false;
+    
+    // 🔍 插件卸载检测标志
+    private static volatile boolean PLUGIN_IS_UNLOADING = false;
     
     public MarkdownToolWindow(Project project) {
         this.project = project;
         this.mainPanel = new JBPanel<>(new BorderLayout());
+        
+
         initializeUI();
         setupDocumentListener();
+        setupVisibilityListener();
+        setupPluginUnloadListener();
     }
+    
     
     private void initializeUI() {
         // 移除主面板边框
@@ -225,10 +243,30 @@ public class MarkdownToolWindow {
             document.addDocumentListener(new DocumentListener() {
                 @Override
                 public void documentChanged(@NotNull DocumentEvent event) {
+                    // 🚨🚨🚨 最高优先级：检查紧急停止标志
+                    if (EMERGENCY_STOP_ALL_SAVES) {
+                        System.out.println("🚨 检测到紧急停止标志，忽略文档变化！");
+                        return;
+                    }
+                    
+                    // 🚨 在处理文档变化前检查插件状态
+                    if (isPluginUnloading) {
+                        System.out.println("🚫 插件正在关闭，忽略文档变化");
+                        return;
+                    }
+                    
                     // 标记文档已修改
                     isDocumentModified = true;
+                    System.out.println("📝 文档已修改，设置状态: " + isDocumentModified);
+                    
                     // 延迟更新预览和文件路径显示
                     ApplicationManager.getApplication().invokeLater(() -> {
+                        // 再次检查状态，防止在UI线程中执行不必要的操作
+                        if (isPluginUnloading) {
+                            System.out.println("🚫 UI线程中检测到插件正在关闭，跳过更新");
+                            return;
+                        }
+                        
                         updatePreview();
                         updateStatus("文档已修改");
                         updateFilePathDisplay();
@@ -265,8 +303,11 @@ public class MarkdownToolWindow {
     }
     
     private void newFile() {
+        System.out.println("🆕 新建文件 - 当前修改状态: " + isDocumentModified);
+        
         // 检查当前文档是否有未保存的修改
         if (isDocumentModified) {
+            System.out.println("🔔 显示保存确认对话框");
             int choice = Messages.showYesNoCancelDialog(
                 project,
                 "当前文档有未保存的修改，是否保存？",
@@ -298,7 +339,7 @@ public class MarkdownToolWindow {
         tabbedPane.setSelectedIndex(0);
         
         // 创建新文档内容
-        String newContent = "# 新的Markdown文档\n\n开始编写您的内容...\n\n## 标题示例\n\n这是一个**粗体**文本和*斜体*文本的示例。\n\n```java\n// 代码块示例\npublic class Hello {\n    public static void main(String[] args) {\n        System.out.println(\"Hello World!\");\n    }\n}\n```\n\n> 这是一个引用块\n\n## 多级列表示例\n\n### 无序列表嵌套\n- 一级项目1\n  - 二级项目1\n    - 三级项目1\n    - 三级项目2\n  - 二级项目2\n- 一级项目2\n\n### 有序列表嵌套\n1. 第一步\n   1. 子步骤1.1\n   2. 子步骤1.2\n      1. 详细步骤1.2.1\n      2. 详细步骤1.2.2\n2. 第二步\n\n### 混合列表嵌套\n1. 有序项目1\n   - 无序子项目1\n   - 无序子项目2\n     1. 有序孙项目1\n     2. 有序孙项目2\n2. 有序项目2\n   - 无序子项目A\n     - 更深层无序项目\n";
+        String newContent = "# 新的Markdown文档\n\n开始编写您的内容...\n\n## 标题示例\n\n这是一个**粗体**文本和*斜体*文本的示例。\n\n访问 [百度](www.baidu.com)\n\nGitHub: [链接](github.com/user/repo)\n\n邮箱: contact@example.com\n\n完整链接: https://www.google.com\n\n```java\n// 代码块示例\npublic class Hello {\n    public static void main(String[] args) {\n        System.out.println(\"Hello World!\");\n    }\n}\n```\n\n> 这是一个引用块\n\n## 多级列表示例\n\n### 无序列表嵌套\n- 一级项目1\n  - 二级项目1\n    - 三级项目1\n    - 三级项目2\n  - 二级项目2\n- 一级项目2\n\n### 有序列表嵌套\n1. 第一步\n   1. 子步骤1.1\n   2. 子步骤1.2\n      1. 详细步骤1.2.1\n      2. 详细步骤1.2.2\n2. 第二步\n\n### 混合列表嵌套\n1. 有序项目1\n   - 无序子项目1\n   - 无序子项目2\n     1. 有序孙项目1\n     2. 有序孙项目2\n2. 有序项目2\n   - 无序子项目A\n     - 更深层无序项目\n";
         
         WriteCommandAction.runWriteCommandAction(project, () -> {
             document.setText(newContent);
@@ -635,10 +676,505 @@ public class MarkdownToolWindow {
         }
     }
     
+    /**
+     * 设置插件卸载监听器
+     */
+    private void setupPluginUnloadListener() {
+        try {
+            // 使用项目级别的MessageBus来监听插件卸载事件
+            project.getMessageBus().connect(this)
+                .subscribe(com.intellij.ide.plugins.DynamicPluginListener.TOPIC, 
+                    new com.intellij.ide.plugins.DynamicPluginListener() {
+                        @Override
+                        public void beforePluginUnload(@org.jetbrains.annotations.NotNull 
+                                                     com.intellij.ide.plugins.IdeaPluginDescriptor pluginDescriptor, 
+                                                     boolean isUpdate) {
+                            // 检查是否是当前插件
+                            String pluginId = pluginDescriptor.getPluginId().getIdString();
+                            System.out.println("🔍 插件即将卸载: " + pluginId);
+                            
+                            if (pluginId.contains("markdown-editor") || 
+                                pluginId.contains("markdown") ||
+                                pluginDescriptor.getName().toLowerCase().contains("markdown")) {
+                                
+                                System.out.println("🚨 检测到Markdown插件即将卸载: " + pluginId);
+                                
+                                // 设置全局卸载标志
+                                PLUGIN_IS_UNLOADING = true;
+                                EMERGENCY_STOP_ALL_SAVES = true;
+                                isPluginUnloading = true;
+                                
+                                // 立即清除状态，防止保存操作
+                                if (MarkdownToolWindow.this.currentFile != null) {
+                                    MarkdownToolWindow.this.currentFile = null;
+                                }
+                                MarkdownToolWindow.this.isDocumentModified = false;
+                                
+                                System.out.println("🚨 已设置插件卸载标志，阻止所有保存操作");
+                            }
+                        }
+                        
+                        @Override
+                        public void pluginUnloaded(@org.jetbrains.annotations.NotNull 
+                                                 com.intellij.ide.plugins.IdeaPluginDescriptor pluginDescriptor, 
+                                                 boolean isUpdate) {
+                            String pluginId = pluginDescriptor.getPluginId().getIdString();
+                            System.out.println("🔍 插件已卸载: " + pluginId);
+                        }
+                    });
+            
+            System.out.println("✅ 插件卸载监听器设置成功");
+            
+        } catch (Exception ex) {
+            System.err.println("❌ 设置插件卸载监听器失败: " + ex.getMessage());
+            ex.printStackTrace();
+        }
+    }
+    
+    /**
+     * 设置全局插件卸载状态（供外部调用，如插件卸载时）
+     */
+    public static void setPluginUnloading(boolean unloading) {
+        isPluginUnloading = unloading;
+        if (unloading) {
+            System.out.println("🚫 设置全局插件卸载状态，所有实例将跳过自动保存");
+            // 🚨🚨🚨 插件卸载时设置紧急停止标志
+            EMERGENCY_STOP_ALL_SAVES = true;
+            PLUGIN_IS_UNLOADING = true;
+            System.out.println("🚨 插件卸载，设置紧急停止标志阻止所有保存操作");
+        }
+    }
+    
+    /**
+     * 检测是否为插件卸载操作
+     */
+    private boolean isPluginUninstallOperation() {
+        try {
+            // 🔍 方法1: 检查插件卸载监听器设置的标志
+            if (PLUGIN_IS_UNLOADING) {
+                System.out.println("🔍 通过插件监听器检测到卸载操作");
+                return true;
+            }
+            
+            // 🔍 方法2: 检查线程名称
+            String threadName = Thread.currentThread().getName();
+            System.out.println("🔍 当前线程名称: " + threadName);
+            
+            // 检查是否为插件卸载相关的线程
+            if (threadName.toLowerCase().contains("plugin") && 
+                (threadName.toLowerCase().contains("unload") || 
+                 threadName.toLowerCase().contains("uninstall") ||
+                 threadName.toLowerCase().contains("disable"))) {
+                System.out.println("🔍 检测到插件卸载线程: " + threadName);
+                return true;
+            }
+            
+            // 🔍 方法3: 检查调用栈
+            StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+            for (StackTraceElement element : stackTrace) {
+                String className = element.getClassName();
+                String methodName = element.getMethodName();
+                
+                // 检查IntelliJ插件管理相关的类
+                if (className.contains("DynamicPlugins") || 
+                    className.contains("PluginManagerCore") ||
+                    className.contains("PluginInstaller") ||
+                    className.contains("IdeaPluginDescriptor")) {
+                    
+                    if (methodName.contains("unload") || 
+                        methodName.contains("disable") ||
+                        methodName.contains("uninstall")) {
+                        System.out.println("🔍 在调用栈中发现插件卸载操作: " + className + "." + methodName);
+                        return true;
+                    }
+                }
+            }
+            
+            return false;
+            
+        } catch (Exception ex) {
+            System.err.println("❌ 检测插件卸载操作时发生异常: " + ex.getMessage());
+            return false; // 出现异常时保守处理，不认为是卸载
+        }
+    }
+    
+    /**
+     * 设置可见性监听器
+     */
+    private void setupVisibilityListener() {
+        mainPanel.addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0) {
+                System.out.println("🔄 层次事件触发 - isShowing: " + mainPanel.isShowing() + 
+                                 ", isPluginUnloading: " + isPluginUnloading);
+
+                // 🚨🚨🚨 最高优先级：检查紧急停止标志（仅在插件卸载时设置）
+                if (EMERGENCY_STOP_ALL_SAVES) {
+                    System.out.println("🚨 检测到紧急停止标志，强制跳过所有保存操作！");
+                    return;
+                }
+                
+                if (!mainPanel.isShowing()) {
+                    // 面板变为不可见且不是插件关闭时才触发自动保存
+                    System.out.println("🔄 检测到Markdown工具窗口变为不可见，检查是否需要自动保存");
+                    
+                    // 添加额外的检查：确保不是因为IDE关闭或项目关闭导致的不可见
+                    if (isNormalHideOperation()) {
+                        System.out.println("✅ 确认为正常隐藏操作，触发自动保存");
+                        autoSaveOnClose();
+                    } else {
+                        System.out.println("ℹ️ 检测到异常隐藏操作（可能是IDE关闭），跳过自动保存");
+                    }
+                } else {
+                    System.out.println("ℹ️ 不符合自动保存条件，跳过");
+                }
+            }
+        });
+    }
+    
+    /**
+     * 设置工具窗口引用并添加监听器
+     */
+    public void setToolWindow(ToolWindow toolWindow) {
+        this.toolWindow = toolWindow;
+        setupTabChangeListener();
+    }
+    
+    /**
+     * 设置标签页切换监听器
+     */
+    private void setupTabChangeListener() {
+        if (tabbedPane != null) {
+            tabbedPane.addChangeListener(e -> {
+                // 标签页切换时刷新预览（如果切换到预览Tab）
+                int selectedIndex = tabbedPane.getSelectedIndex();
+                if (selectedIndex == 1) { // 1是预览Tab
+                    System.out.println("🔄 切换到预览Tab，刷新预览内容");
+                    // 这里可以添加刷新预览的逻辑，但不保存文件
+                    if (previewPanel != null) {
+                        String currentContent = "";
+                        if (editor != null && !editor.isDisposed()) {
+                            currentContent = editor.getDocument().getText();
+                        }
+                        previewPanel.updateContent(currentContent);
+                    }
+                }
+            });
+        }
+    }
+    
+    /**
+     * 判断是否为正常的隐藏操作（非IDE关闭或插件卸载）
+     */
+    private boolean isNormalHideOperation() {
+        try {
+            
+            // 检查工具窗口是否仍然有效
+            if (toolWindow == null || !toolWindow.isAvailable()) {
+                return false;
+            }
+            
+            // 如果所有检查都通过，认为是正常的隐藏操作
+            return true;
+            
+        } catch (Exception ex) {
+            System.err.println("❌ 检查隐藏操作状态时发生错误: " + ex.getMessage());
+            return false; // 出现异常时保守处理，不触发保存
+        }
+    }
+    
+    /**
+     * 判断dispose时是否应该自动保存
+     */
+    private boolean shouldAutoSaveOnDispose() {
+        try {
+         
+            
+            // 📌 检查全局插件卸载状态
+            if (isPluginUnloading) {
+                System.out.println("🚫 插件正在卸载，全局跳过保存");
+                return false;
+            }
+            
+            // 检查当前编辑器和文档状态
+            if (editor == null || editor.isDisposed()) {
+                System.out.println("ℹ️ 编辑器已释放，跳过保存");
+                return false;
+            }
+            
+            // 检查是否有实际的修改内容需要保存
+            if (!isDocumentModified) {
+                System.out.println("ℹ️ 文档未修改，跳过保存");
+                return false;
+            }
+            
+            // 检查内容是否为空
+            String content = editor.getDocument().getText();
+            if (content.trim().isEmpty()) {
+                System.out.println("ℹ️ 内容为空，跳过保存");
+                return false;
+            }
+            
+            // 所有检查通过，可以保存
+            return true;
+            
+        } catch (Exception ex) {
+            System.err.println("❌ 检查保存条件时发生错误: " + ex.getMessage());
+            return false; // 出现异常时保守处理，不保存
+        }
+    }
+    
+    /**
+     * 工具窗口隐藏时自动保存（供外部调用）
+     */
+    public void autoSaveOnHide() {
+        if ( !isPluginUnloading && isNormalHideOperation()) {
+            autoSaveOnClose();
+        } else {
+            System.out.println("ℹ️ 检测到插件正在关闭或异常状态，跳过外部触发的自动保存");
+        }
+    }
+    
+    /**
+     * 工具窗口关闭时自动保存
+     */
+    private void autoSaveOnClose() {
+        try {
+            System.out.println("💾 工具窗口关闭，检查是否需要自动保存");
+            
+            // 🚨🚨🚨 最高优先级：检查紧急停止标志（仅在插件卸载时设置）
+            if (EMERGENCY_STOP_ALL_SAVES) {
+                System.out.println("🚨 检测到紧急停止标志，强制跳过自动保存！");
+                return;
+            }
+            
+            // 获取当前编辑器内容
+            String content = "";
+            if (editor != null && !editor.isDisposed()) {
+                content = editor.getDocument().getText();
+            } else {
+                System.out.println("ℹ️ 编辑器不可用，跳过自动保存");
+                return;
+            }
+            
+            // 检查是否有内容需要保存
+            if (content.trim().isEmpty()) {
+                System.out.println("ℹ️ 编辑器内容为空，跳过自动保存");
+                return;
+            }
+            
+            // 检查文档是否真的有修改
+            if (!isDocumentModified) {
+                System.out.println("ℹ️ 文档未修改，跳过自动保存");
+                return;
+            }
+            
+            // 🚨 最后一次检查：在执行任何保存操作前再次确认状态
+            if (isPluginUnloading) {
+                System.out.println("🚫 最终检查发现插件正在关闭，强制终止保存操作");
+                return;
+            }
+            
+            if (currentFile != null && isDocumentModified) {
+                // 情况1: 已有文件且已修改 - 直接保存
+                System.out.println("📝 检测到已有文件已修改，执行自动保存: " + currentFile.getName());
+                autoSaveExistingFile(content);
+            } else if (currentFile == null && isDocumentModified) {
+                // 情况2: 新建文档且有内容 - 提示用户保存
+                System.out.println("📝 检测到新建文档有内容，提示保存");
+                autoSaveNewDocument(content);
+            } else if (!isDocumentModified) {
+                System.out.println("ℹ️ 文件未修改，跳过自动保存");
+            }
+        } catch (Exception ex) {
+            System.err.println("❌ 自动保存过程中发生错误: " + ex.getMessage());
+            ex.printStackTrace();
+        }
+    }
+    
+    /**
+     * 自动保存已存在的文件
+     */
+    private void autoSaveExistingFile(String content) {
+        // 🚨🚨🚨 最高优先级：检查紧急停止标志
+        if (EMERGENCY_STOP_ALL_SAVES) {
+            System.out.println("🚨 检测到紧急停止标志，强制跳过文件保存！");
+            return;
+        }
+        
+        // 🚨 在执行写操作前最后一次检查状态
+        if (isPluginUnloading) {
+            System.out.println("🚫 写操作前检查发现插件正在关闭，取消保存");
+            return;
+        }
+        
+        final String finalContent = content;
+        final VirtualFile finalCurrentFile = currentFile;
+        
+        try {
+            ApplicationManager.getApplication().runWriteAction(() -> {
+            try {
+                WriteCommandAction.runWriteCommandAction(project, () -> {
+                    try {
+                        // 🚨🚨🚨 最高优先级：在实际写入前检查紧急停止标志
+                        if (EMERGENCY_STOP_ALL_SAVES) {
+                            System.out.println("🚨 写入前检测到紧急停止标志，强制取消写入！");
+                            return;
+                        }
+                        
+                        // 🚨 在实际写入前再次检查状态
+                        if (isPluginUnloading) {
+                            System.out.println("🚫 写入前发现插件正在关闭，取消写入");
+                            return;
+                        }
+                        
+                        finalCurrentFile.setBinaryContent(finalContent.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        isDocumentModified = false;
+                        System.out.println("✅ 自动保存成功: " + finalCurrentFile.getName());
+                        updateStatus("✅ 自动保存成功: " + finalCurrentFile.getName());
+                    } catch (Exception ex) {
+                        System.err.println("❌ 自动保存失败: " + ex.getMessage());
+                    }
+                });
+            } catch (Exception ex) {
+                System.err.println("❌ 自动保存写入操作失败: " + ex.getMessage());
+            }
+        });
+        } catch (Exception ex) {
+            System.err.println("❌ 调用写入操作时发生错误: " + ex.getMessage());
+        }
+    }
+    
+    /**
+     * 自动保存新建文档
+     */
+    private void autoSaveNewDocument(String content) {
+        // 🚨🚨🚨 最高优先级：检查紧急停止标志
+        if (EMERGENCY_STOP_ALL_SAVES) {
+            System.out.println("🚨 检测到紧急停止标志，强制跳过新文档保存！");
+            return;
+        }
+        
+        // 检查插件状态
+        if (isPluginUnloading) {
+            System.out.println("🚫 插件正在关闭，跳过保存对话框");
+            return;
+        }
+        
+        try {
+            ApplicationManager.getApplication().invokeLater(() -> {
+                // 在UI线程中再次检查状态
+                if (isPluginUnloading) {
+                    System.out.println("🚫 应用程序或插件正在关闭，跳过保存对话框");
+                    return;
+                }
+      
+                try {
+                    int choice = Messages.showYesNoDialog(
+                        project,
+                        "检测到未保存的新建文档，是否要保存？",
+                        "自动保存提示",
+                        "保存",
+                        "不保存",
+                        Messages.getQuestionIcon()
+                    );
+                    
+                    if (choice == Messages.YES) {
+                        // 用户选择保存 - 打开保存对话框
+                        System.out.println("📁 用户选择保存新建文档，打开保存对话框");
+                        saveAsFileWithContent(content);
+                    } else {
+                        System.out.println("ℹ️ 用户选择不保存新建文档");
+                    }
+                } catch (Exception ex) {
+                    System.err.println("❌ 显示保存对话框时发生错误: " + ex.getMessage());
+                }
+            });
+        } catch (Exception ex) {
+            System.err.println("❌ 调度UI任务时发生错误: " + ex.getMessage());
+        }
+    }
+    
+    /**
+     * 使用指定内容另存为文件
+     */
+    private void saveAsFileWithContent(String content) {
+        FileSaverDescriptor descriptor = new FileSaverDescriptor("保存Markdown文件", "选择保存位置", "md", "markdown", "txt");
+        FileSaverDialog dialog = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, project);
+        
+        var fileWrapper = dialog.save(project.getBaseDir(), "untitled.md");
+        if (fileWrapper != null) {
+            try {
+                VirtualFile savedFile = fileWrapper.getVirtualFile(true);
+                if (savedFile != null) {
+                    // 保存内容到文件
+                    WriteCommandAction.runWriteCommandAction(project, () -> {
+                        try {
+                            savedFile.setBinaryContent(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                            currentFile = savedFile;
+                            isDocumentModified = false;
+                            updateFilePathDisplay();
+                            System.out.println("✅ 新建文档自动保存成功: " + savedFile.getName());
+                            updateStatus("✅ 已保存: " + savedFile.getName());
+                        } catch (Exception ex) {
+                            System.err.println("❌ 保存文件失败: " + ex.getMessage());
+                            updateStatus("❌ 保存失败: " + ex.getMessage());
+                        }
+                    });
+                }
+            } catch (Exception ex) {
+                System.err.println("❌ 创建文件失败: " + ex.getMessage());
+                updateStatus("❌ 保存失败: " + ex.getMessage());
+            }
+        }
+    }
+    
     public void dispose() {
         System.out.println("🗑️ 释放MarkdownToolWindow资源");
         
+        // 🔍 检测是否为插件卸载操作
+        boolean isPluginUninstalling = isPluginUninstallOperation();
+        System.out.println("🔍 是否为插件卸载: " + isPluginUninstalling);
+        
         try {
+            if (isPluginUninstalling || isPluginUnloading) {
+                // 插件卸载：阻止保存操作
+                EMERGENCY_STOP_ALL_SAVES = true;
+                isPluginUnloading = true;
+                PLUGIN_IS_UNLOADING = true;
+                System.out.println("🚨 检测到插件卸载，阻止保存操作");
+            } else {
+                // 正常的工具窗口关闭：触发自动保存
+                System.out.println("ℹ️ 正常的工具窗口关闭，触发自动保存");
+                autoSaveOnClose();
+            }
+            
+            // 🚨 立即移除所有监听器，防止在dispose过程中触发事件
+            if (document != null) {
+                try {
+                    // DocumentListener会在编辑器释放时自动移除，但为了保险起见手动清理
+                    System.out.println("🔇 清理文档监听器");
+                } catch (Exception ex) {
+                    System.err.println("❌ 清理文档监听器时出错: " + ex.getMessage());
+                }
+            }
+            
+            // 🚨 移除层次监听器
+            if (mainPanel != null) {
+                try {
+                    // 清除所有层次监听器
+                    java.awt.event.HierarchyListener[] listeners = mainPanel.getHierarchyListeners();
+                    for (java.awt.event.HierarchyListener listener : listeners) {
+                        mainPanel.removeHierarchyListener(listener);
+                    }
+                    System.out.println("🔇 已移除 " + listeners.length + " 个层次监听器");
+                } catch (Exception ex) {
+                    System.err.println("❌ 移除层次监听器时出错: " + ex.getMessage());
+                }
+            }
+    
+            
+            System.out.println("ℹ️ 插件正在卸载，强制跳过所有自动保存操作");
+            
             // 释放编辑器资源
             if (editor != null && !editor.isDisposed()) {
                 // 释放编辑器（会自动移除监听器）
@@ -669,7 +1205,7 @@ public class MarkdownToolWindow {
                 mainPanel.removeAll();
             }
             
-            // 清空引用 (不能设final字段为null)
+            // 清空文档和文件引用
             document = null;
             currentFile = null;
             
