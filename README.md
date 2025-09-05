@@ -6,7 +6,7 @@
 
 一个功能强大的 **IntelliJ IDEA** Markdown 编辑器插件，提供完整的文本编辑、实时预览和丰富的 Markdown 处理功能。
 
-![Markdown Editor](src/main/resources/images/screenshot1.png)
+
 
 ## ✨ 主要特性
 
@@ -49,15 +49,9 @@
 
 ## 📸 功能截图
 
-### 编辑界面
-![编辑器界面](src/main/resources/images/screenshot1.png)
+![编辑器界面](src/main/resources/images/screenshot1.png){width = 50%} 
+![预览界面](src/main/resources/images/screenshot2.png){width = 50%}
 
-*集成的编辑器界面，支持语法高亮和行号显示*
-
-### 预览界面
-![预览界面](src/main/resources/images/screenshot2.png)
-
-*实时预览功能，支持多种主题切换*
 
 ## 🚀 安装指南
 
