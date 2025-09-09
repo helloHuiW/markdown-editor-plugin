@@ -119,12 +119,12 @@ public class MarkdownPreviewPanel implements Disposable {
                "a { color: #4FC3F7; text-decoration: underline; }" +
                "strong { font-weight: bold; color: #FFFFFF; }" +
                "em { font-style: italic; color: #E6E6E6; }" +
-               "ul { margin: 4px 0; padding-left: 16px; color: #E6E6E6; }" +
-               "ol { margin: 4px 0; padding-left: 16px; color: #E6E6E6; }" +
-               "li { margin: 1px 0; color: #E6E6E6; }" +
-               "table { border: 1px solid #555555; margin: 6px 0; }" +
-               "th { font-weight: bold; background-color: #404040; color: #FFFFFF; padding: 4px; border: 1px solid #555555; font-size: 11px; }" +
-               "td { color: #E6E6E6; padding: 4px; border: 1px solid #555555; font-size: 11px; }" +
+               "ul { margin: 4px 0; padding-left: 20px; color: #E6E6E6; list-style-type: disc; }" +
+               "ol { margin: 4px 0; padding-left: 20px; color: #E6E6E6; list-style-type: decimal; }" +
+               "li { margin: 2px 0; color: #E6E6E6; display: list-item; }" +
+               "table { border: 1px solid #555555; margin: 6px 0; border-collapse: collapse; }" +
+               "th { font-weight: bold; background-color: #404040; color: #FFFFFF; padding: 6px; border: 1px solid #555555; font-size: 11px; }" +
+               "td { color: #E6E6E6; padding: 6px; border: 1px solid #555555; font-size: 11px; }" +
                "hr { border: none; border-top: 1px solid #555555; margin: 10px 0; }";
     }
     

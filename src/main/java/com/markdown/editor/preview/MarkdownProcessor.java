@@ -77,13 +77,15 @@ public class MarkdownProcessor {
         
         String[] lines = markdown.split("\n");
         boolean inCodeBlock = false;
+        boolean inTable = false;
         String codeBlockLanguage = null;
         String currentCodeBlockId = null; // 当前代码块ID
         Stack<String> listStack = new Stack<>(); // 跟踪嵌套列表类型
         int lastListLevel = -1; // 跟踪列表层级
         int codeBlockIndex = 0; // 代码块索引，基于文档位置
         
-        for (String line : lines) {
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
             // 代码块处理 (支持折叠)
             if (line.startsWith("```")) {
                 if (inCodeBlock) {
@@ -130,6 +132,47 @@ public class MarkdownProcessor {
                     inCodeBlock = true;
                 }
                 continue;
+            }
+            
+            // 表格处理 - 在代码块处理之后，其他处理之前
+            if (!inCodeBlock && isTableRow(line)) {
+                // 检查下一行是否是分隔符（表头标识）
+                if (i + 1 < lines.length && isTableSeparatorRow(lines[i + 1].trim())) {
+                    if (!inTable) {
+                        closeAllLists(html, listStack);
+                        lastListLevel = -1;
+                        html.append("<table>");
+                        inTable = true;
+                    }
+                    // 处理表头
+                    html.append("<thead><tr>");
+                    String[] headers = parseTableRow(line);
+                    for (String header : headers) {
+                        String trimmed = processInlineFormatting(header.trim());
+                        html.append("<th>").append(trimmed).append("</th>");
+                    }
+                    html.append("</tr></thead><tbody>");
+                    i++; // 跳过分隔符行
+                    continue;
+                } else if (inTable && isTableRow(line)) {
+                    // 处理表格数据行
+                    html.append("<tr>");
+                    String[] cells = parseTableRow(line);
+                    for (String cell : cells) {
+                        String trimmed = processInlineFormatting(cell.trim());
+                        html.append("<td>").append(trimmed).append("</td>");
+                    }
+                    html.append("</tr>");
+                    continue;
+                } else if (inTable) {
+                    // 非表格行，结束表格
+                    html.append("</tbody></table>");
+                    inTable = false;
+                }
+            } else if (inTable && !isTableRow(line)) {
+                // 结束表格
+                html.append("</tbody></table>");
+                inTable = false;
             }
             
             if (inCodeBlock) {
@@ -225,6 +268,12 @@ public class MarkdownProcessor {
                 html.append("\n");
             }
         }
+        
+        // 关闭未闭合的表格
+        if (inTable) {
+            html.append("</tbody></table>");
+        }
+        
         closeAllLists(html, listStack);
         
         return html.toString();
@@ -990,37 +1039,37 @@ public class MarkdownProcessor {
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i].trim();
             
-            // 检查是否是表格行（包含 |）
-            if (line.contains("|") && !line.isEmpty()) {
-                // 检查下一行是否是分隔符（包含 --- 或 :---: 等）
-                if (i + 1 < lines.length && lines[i + 1].trim().matches(".*[-:]+.*")) {
+            // 改进的表格检测：更严格的Markdown表格格式检测
+            if (isTableRow(line) && !line.isEmpty()) {
+                // 检查下一行是否是分隔符（更严格的检测）
+                if (i + 1 < lines.length && isTableSeparatorRow(lines[i + 1].trim())) {
                     if (!inTable) {
                         result.append("<table>\n<thead>\n");
                         inTable = true;
                     }
                     // 处理表头
                     result.append("<tr>");
-                    String[] headers = line.split("\\|");
+                    String[] headers = parseTableRow(line);
                     for (String header : headers) {
-                        String trimmed = header.trim();
-                        if (!trimmed.isEmpty()) {
-                            result.append("<th>").append(trimmed).append("</th>");
-                        }
+                        String trimmed = processInlineFormatting(header.trim());
+                        result.append("<th>").append(trimmed).append("</th>");
                     }
                     result.append("</tr>\n</thead>\n<tbody>\n");
                     i++; // 跳过分隔符行
-                } else if (inTable) {
+                } else if (inTable && isTableRow(line)) {
                     // 处理表格数据行
                     result.append("<tr>");
-                    String[] cells = line.split("\\|");
+                    String[] cells = parseTableRow(line);
                     for (String cell : cells) {
-                        String trimmed = cell.trim();
-                        if (!trimmed.isEmpty()) {
-                            result.append("<td>").append(trimmed).append("</td>");
-                        }
+                        String trimmed = processInlineFormatting(cell.trim());
+                        result.append("<td>").append(trimmed).append("</td>");
                     }
                     result.append("</tr>\n");
                 } else {
+                    if (inTable) {
+                        result.append("</tbody>\n</table>\n");
+                        inTable = false;
+                    }
                     result.append(line).append("\n");
                 }
             } else {
@@ -1037,6 +1086,108 @@ public class MarkdownProcessor {
         }
         
         return result.toString();
+    }
+    
+    /**
+     * 检查是否是表格行
+     */
+    private boolean isTableRow(String line) {
+        if (line == null || line.trim().isEmpty()) {
+            return false;
+        }
+        
+        // 标准Markdown表格格式：
+        // - 包含至少一个 | 字符
+        // - 可以以 | 开始和结束（可选）
+        // - 至少包含两个单元格（即至少一个分隔符 |）
+        
+        String trimmed = line.trim();
+        int pipeCount = 0;
+        
+        for (int i = 0; i < trimmed.length(); i++) {
+            if (trimmed.charAt(i) == '|') {
+                pipeCount++;
+            }
+        }
+        
+        // 表格行至少需要包含一个管道符，且管道符数量合理
+        return pipeCount >= 1 && pipeCount <= 20; // 合理的管道符数量限制
+    }
+    
+    /**
+     * 检查是否是表格分隔符行
+     */
+    private boolean isTableSeparatorRow(String line) {
+        if (line == null || line.trim().isEmpty()) {
+            return false;
+        }
+        
+        String trimmed = line.trim();
+        
+        // 标准Markdown表格分隔符格式：
+        // - 包含 | 和 - 字符
+        // - 可以包含 : 用于对齐
+        // - 可以有空格
+        
+        // 移除首尾的 | 字符
+        if (trimmed.startsWith("|")) {
+            trimmed = trimmed.substring(1);
+        }
+        if (trimmed.endsWith("|")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        
+        // 分割并检查每个单元格
+        String[] cells = trimmed.split("\\|");
+        
+        for (String cell : cells) {
+            String cellTrimmed = cell.trim();
+            if (cellTrimmed.isEmpty()) {
+                continue;
+            }
+            
+            // 每个单元格应该只包含 -、: 和空格
+            if (!cellTrimmed.matches("^[:\\s-]+$")) {
+                return false;
+            }
+            
+            // 至少要有一个 - 字符
+            if (!cellTrimmed.contains("-")) {
+                return false;
+            }
+        }
+        
+        return cells.length > 0;
+    }
+    
+    /**
+     * 解析表格行，正确处理首尾的管道符
+     */
+    private String[] parseTableRow(String line) {
+        if (line == null || line.trim().isEmpty()) {
+            return new String[0];
+        }
+        
+        String trimmed = line.trim();
+        
+        // 移除首尾的 | 字符（如果存在）
+        if (trimmed.startsWith("|")) {
+            trimmed = trimmed.substring(1);
+        }
+        if (trimmed.endsWith("|")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        
+        // 分割单元格
+        String[] cells = trimmed.split("\\|", -1); // -1 保留空字符串
+        
+        // 过滤掉完全空白的单元格（但保留有意义的空格）
+        java.util.List<String> nonEmptyCells = new java.util.ArrayList<>();
+        for (String cell : cells) {
+            nonEmptyCells.add(cell); // 保留所有单元格，包括空的
+        }
+        
+        return nonEmptyCells.toArray(new String[0]);
     }
     
     private String processCodeBlocksSimple(String html) {
