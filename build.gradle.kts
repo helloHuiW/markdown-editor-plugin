@@ -39,7 +39,7 @@ intellijPlatform {
     
     pluginConfiguration {
         name = "mini markdown"
-        version = "1.0.0"
+        version = "1.0.1"
         description = "A comprehensive markdown editor with preview functionality"
         
         ideaVersion {
